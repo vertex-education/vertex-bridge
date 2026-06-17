@@ -1,0 +1,90 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1781651938894,
+      "tag": "0000_icy_sumo",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1781651940000,
+      "tag": "0001_client_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1781740800000,
+      "tag": "0002_multi_school_invites",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1781744400000,
+      "tag": "0003_asana_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1781748000000,
+      "tag": "0004_asana_oauth_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1781751600000,
+      "tag": "0005_audit_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1781755200000,
+      "tag": "0006_school_asana_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1781758800000,
+      "tag": "0007_asana_project_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1781762400000,
+      "tag": "0008_task_file_requirements",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1781766000000,
+      "tag": "0009_school_onboarding_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1781769600000,
+      "tag": "0010_school_onboarding_task_states",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1781773200000,
+      "tag": "0011_scheduled_nudges",
+      "breakpoints": true
+    }
+  ]
+}

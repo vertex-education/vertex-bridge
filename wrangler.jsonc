@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vertex-bridge",
+  "compatibility_date": "2025-09-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "src/worker.ts",
+  "triggers": {
+    "crons": ["0 14 * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vertex-bridge-db",
+      "database_id": "13671c73-c39e-40a1-aa65-3a4a38a707be",
+      "migrations_dir": "drizzle",
+      "remote": true
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UPLOADS_BUCKET",
+      "bucket_name": "vertex-bridge-uploads",
+      "remote": true
+    }
+  ],
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "remote": true
+    }
+  ],
+  "vars": {
+    "BETTER_AUTH_URL": "https://vertex.rcormier.dev"
+  }
+}
