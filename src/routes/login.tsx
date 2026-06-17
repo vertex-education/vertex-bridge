@@ -69,7 +69,7 @@ function LoginPage() {
       getInviteByToken({ data: invite_token })
         .then((details) => {
           setInviteDetails(details)
-          setName(details.role === 'school_user' ? 'Jack Bauer' : '')
+          setName('')
           setEmail(details.email)
           setPassword('')
           setNewPassword('')
@@ -110,7 +110,7 @@ function LoginPage() {
         const session = await authClient.getSession()
         const role = session.data?.user ? (session.data.user as any).role : null
         
-        if (role === 'school_user') {
+        if (role === 'school_leader' || role === 'school_staff' || role === 'school_user') {
           navigate({ to: '/school-onboarding' })
         } else if (redirect) {
           navigate({ to: redirect as any })
@@ -395,10 +395,10 @@ function LoginPage() {
                 Invitation Code Verified
               </div>
               <h2 className="display-title text-2xl font-bold text-[var(--vertex-blue)] mb-2">
-                Set Your Password
+                {inviteDetails.schoolContactRole === 'school_staff' ? 'Set up school staff access' : 'Set Your Password'}
               </h2>
               <p className="text-sm text-[var(--sea-ink-soft)] mb-6">
-                Hello, <strong>{inviteDetails.role === 'school_user' ? 'Jack Bauer' : inviteDetails.email}</strong>. Welcome to Vertex Bridge. Let's finish setting up your account for <strong>{inviteDetails.schoolName || 'Vertex Education'}</strong>.
+                Welcome to Vertex Bridge. This invite will add <strong>{inviteDetails.email}</strong> as <strong>{inviteDetails.role === 'school_staff' || inviteDetails.schoolContactRole === 'school_staff' ? 'School Staff' : inviteDetails.role === 'school_leader' || inviteDetails.role === 'school_user' ? 'School Leader' : 'Vertex Staff'}</strong> for <strong>{inviteDetails.schoolName || 'Vertex Education'}</strong>.
               </p>
 
               {errorMsg && (

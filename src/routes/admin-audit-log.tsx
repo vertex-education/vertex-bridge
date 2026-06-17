@@ -65,7 +65,8 @@ function formatLabel(value: string | null | undefined) {
 
 function formatRole(value: string | null | undefined) {
   if (value === 'vertex_user') return 'Vertex Staff'
-  if (value === 'school_user') return 'School Client'
+  if (value === 'school_leader' || value === 'school_user') return 'School Leader'
+  if (value === 'school_staff') return 'School Staff'
   if (value === 'admin') return 'Admin'
   return 'System'
 }
@@ -300,7 +301,8 @@ function AuditLogPage() {
               <option value="">All roles</option>
               <option value="admin">Admin</option>
               <option value="vertex_user">Vertex Staff</option>
-              <option value="school_user">School Client</option>
+              <option value="school_leader">School Leader</option>
+              <option value="school_staff">School Staff</option>
             </select>
           </div>
         </section>

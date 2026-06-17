@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { Bot, ClipboardList, LayoutDashboard, ScrollText, Settings, UserCog, UserPlus } from 'lucide-react'
+import { Bot, ClipboardList, FileText, LayoutDashboard, ScrollText, Settings, UserCog, UserPlus, UsersRound } from 'lucide-react'
 import { authClient } from '#/lib/auth-client'
 
 const mobileNavLinkClass =
@@ -16,6 +16,7 @@ function openVertexAI() {
 export default function MobileBottomNav() {
   const { data: session } = authClient.useSession()
   const role = session?.user ? (session.user as any).role : null
+  const isSchoolRole = role === 'school_leader' || role === 'school_staff' || role === 'school_user'
 
   if (!role) return null
 
@@ -31,6 +32,10 @@ export default function MobileBottomNav() {
             <Link to="/vertex-dashboard" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
               <LayoutDashboard size={18} aria-hidden="true" />
               <span>Dashboard</span>
+            </Link>
+            <Link to="/admin-users" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
+              <UsersRound size={18} aria-hidden="true" />
+              <span>Users</span>
             </Link>
             <Link to="/admin-settings" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
               <UserCog size={18} aria-hidden="true" />
@@ -58,11 +63,15 @@ export default function MobileBottomNav() {
             </Link>
           </>
         )}
-        {role === 'school_user' && (
+        {isSchoolRole && (
           <>
             <Link to="/school-onboarding" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
               <ClipboardList size={18} aria-hidden="true" />
-              <span>Onboarding</span>
+              <span>Journey</span>
+            </Link>
+            <Link to="/my-submissions" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
+              <FileText size={18} aria-hidden="true" />
+              <span>Files</span>
             </Link>
             <Link
               to="/school-onboarding"

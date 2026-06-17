@@ -75,7 +75,7 @@ function IndexPage() {
   let portalText = 'Access Portal'
   if (role) {
     portalText = 'Go to Dashboard'
-    if (role === 'school_user') {
+    if (role === 'school_leader' || role === 'school_staff' || role === 'school_user') {
       portalLink = '/school-onboarding'
     } else if (role === 'vertex_user' || role === 'admin') {
       portalLink = '/vertex-dashboard'
@@ -182,13 +182,19 @@ function IndexPage() {
               {/* Decorative Glow */}
               <div className="absolute -inset-4 bg-gradient-to-tr from-[var(--vertex-blue)]/10 to-[var(--vertex-gold)]/5 rounded-[2.5rem] blur-xl opacity-75 -z-10 pointer-events-none" />
 
-              <figure className="m-0 w-full max-w-[380px] rounded-[1.25rem] border border-white/30 bg-[var(--vertex-blue)] p-1 shadow-[0_24px_60px_rgba(0,56,101,0.2)] relative group overflow-hidden">
+              <figure className="hero-artwork m-0 w-full max-w-[380px] rounded-[1.25rem] border border-white/30 bg-[var(--vertex-blue)] p-1 shadow-[0_24px_60px_rgba(0,56,101,0.2)] relative group overflow-hidden">
                 <div className="flex w-full items-center justify-center overflow-hidden rounded-[0.95rem] bg-[var(--lagoon-deep)] p-1 relative">
                   <img
                     src="/brand/vertex-onboarding-ascent.webp"
                     alt="A climber above a mountain landscape blended with a classroom learning moment"
                     className="w-full h-[440px] sm:h-[540px] lg:h-[640px] rounded-[0.6rem] object-cover shadow-[0_15px_35px_rgba(0,0,0,0.35)] transition-transform duration-700 group-hover:scale-[1.02]"
                   />
+                  <span className="hero-sparkle hero-sparkle-one" aria-hidden="true" />
+                  <span className="hero-sparkle hero-sparkle-two" aria-hidden="true" />
+                  <span className="hero-sparkle hero-sparkle-three" aria-hidden="true" />
+                  <span className="hero-sparkle hero-sparkle-four" aria-hidden="true" />
+                  <span className="hero-sparkle hero-sparkle-five" aria-hidden="true" />
+                  <span className="hero-sparkle hero-sparkle-six" aria-hidden="true" />
                 </div>
               </figure>
             </div>

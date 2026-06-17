@@ -6,7 +6,7 @@ export const user = sqliteTable('user', {
   email: text('email').notNull().unique(),
   emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),
   image: text('image'),
-  role: text('role').notNull().default('school_user'), // 'school_user' | 'vertex_user' | 'admin'
+  role: text('role').notNull().default('school_leader'), // 'school_leader' | 'school_staff' | 'vertex_user' | 'admin' | legacy 'school_user'
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -54,11 +54,14 @@ export const verification = sqliteTable('verification', {
 export const invitations = sqliteTable('invitations', {
   id: text('id').primaryKey(),
   email: text('email').notNull(),
-  role: text('role').notNull(), // 'school_user' | 'vertex_user' | 'admin'
+  role: text('role').notNull(), // 'school_leader' | 'school_staff' | 'vertex_user' | 'admin' | legacy 'school_user'
+  schoolContactRole: text('school_contact_role'), // 'school_leader' | 'school_staff'
   schoolName: text('school_name'),
   state: text('state'),
   services: text('services'), // e.g., 'SFO'
   clientType: text('client_type'), // 'New' | 'Existing' | 'Existing New'
+  invitedByUserId: text('invited_by_user_id').references(() => user.id, { onDelete: 'set null' }),
+  invitedByEmail: text('invited_by_email'),
   token: text('token').notNull().unique(),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   accepted: integer('accepted', { mode: 'boolean' }).notNull().default(false),
@@ -66,6 +69,27 @@ export const invitations = sqliteTable('invitations', {
 }, (table) => {
   return {
     emailSchoolUnique: uniqueIndex('invitations_email_school_unique').on(table.email, table.schoolName),
+  }
+})
+
+export const schoolContacts = sqliteTable('school_contacts', {
+  id: text('id').primaryKey(),
+  schoolName: text('school_name').notNull(),
+  userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+  email: text('email').notNull(),
+  name: text('name'),
+  contactRole: text('contact_role').notNull().default('school_staff'), // 'school_leader' | 'school_staff'
+  invitedByUserId: text('invited_by_user_id').references(() => user.id, { onDelete: 'set null' }),
+  invitedByEmail: text('invited_by_email'),
+  acceptedAt: integer('accepted_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => {
+  return {
+    schoolEmailUnique: uniqueIndex('school_contacts_school_email_unique').on(table.schoolName, table.email),
+    schoolNameIdx: index('school_contacts_school_name_idx').on(table.schoolName),
+    userIdIdx: index('school_contacts_user_id_idx').on(table.userId),
+    invitedByUserIdIdx: index('school_contacts_invited_by_user_id_idx').on(table.invitedByUserId),
   }
 })
 
@@ -149,6 +173,27 @@ export const schoolOnboardingTaskStates = sqliteTable('school_onboarding_task_st
   return {
     schoolNameIdx: index('school_onboarding_task_states_school_name_idx').on(table.schoolName),
     completedIdx: index('school_onboarding_task_states_completed_idx').on(table.completed),
+  }
+})
+
+export const schoolOnboardingTaskAssignments = sqliteTable('school_onboarding_task_assignments', {
+  id: text('id').primaryKey(),
+  schoolName: text('school_name').notNull(),
+  asanaTaskId: text('asana_task_id').notNull(),
+  assignedToUserId: text('assigned_to_user_id').references(() => user.id, { onDelete: 'set null' }),
+  assignedToEmail: text('assigned_to_email').notNull(),
+  assignedToName: text('assigned_to_name'),
+  assignedByUserId: text('assigned_by_user_id').references(() => user.id, { onDelete: 'set null' }),
+  assignedByEmail: text('assigned_by_email'),
+  assignedAt: integer('assigned_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => {
+  return {
+    schoolTaskUnique: uniqueIndex('school_onboarding_task_assignments_school_task_unique').on(table.schoolName, table.asanaTaskId),
+    schoolNameIdx: index('school_onboarding_task_assignments_school_name_idx').on(table.schoolName),
+    assignedToUserIdIdx: index('school_onboarding_task_assignments_assigned_to_user_id_idx').on(table.assignedToUserId),
+    assignedToEmailIdx: index('school_onboarding_task_assignments_assigned_to_email_idx').on(table.assignedToEmail),
   }
 })
 

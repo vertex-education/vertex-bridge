@@ -5,6 +5,7 @@ import BetterAuthHeader from '../integrations/better-auth/header-user.tsx'
 export default function Header() {
   const { data: session } = authClient.useSession()
   const role = session?.user ? (session.user as any).role : null
+  const isSchoolRole = role === 'school_leader' || role === 'school_staff' || role === 'school_user'
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--header-bg)] px-2 backdrop-blur-md sm:px-4">
@@ -34,6 +35,9 @@ export default function Header() {
                   <Link to="/admin" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
                     School Invites
                   </Link>
+                  <Link to="/admin-users" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
+                    Users
+                  </Link>
                   <Link to="/vertex-dashboard" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
                     Onboarding Dashboard
                   </Link>
@@ -57,10 +61,15 @@ export default function Header() {
                 </>
               )}
 
-              {role === 'school_user' && (
-                <Link to="/school-onboarding" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
-                  My Onboarding
-                </Link>
+              {isSchoolRole && (
+                <>
+                  <Link to="/school-onboarding" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
+                    My Journey
+                  </Link>
+                  <Link to="/my-submissions" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
+                    My Submissions
+                  </Link>
+                </>
               )}
             </div>
           </div>

@@ -12,8 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VertexDashboardRouteImport } from './routes/vertex-dashboard'
 import { Route as UserSettingsRouteImport } from './routes/user-settings'
 import { Route as SecurityPrivacyRouteImport } from './routes/security-privacy'
+import { Route as SchoolSettingsRouteImport } from './routes/school-settings'
 import { Route as SchoolOnboardingRouteImport } from './routes/school-onboarding'
+import { Route as MySubmissionsRouteImport } from './routes/my-submissions'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as AdminUsersRouteImport } from './routes/admin-users'
 import { Route as AdminSettingsRouteImport } from './routes/admin-settings'
 import { Route as AdminIntegrationsRouteImport } from './routes/admin-integrations'
 import { Route as AdminAuditLogRouteImport } from './routes/admin-audit-log'
@@ -42,14 +45,29 @@ const SecurityPrivacyRoute = SecurityPrivacyRouteImport.update({
   path: '/security-privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SchoolSettingsRoute = SchoolSettingsRouteImport.update({
+  id: '/school-settings',
+  path: '/school-settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SchoolOnboardingRoute = SchoolOnboardingRouteImport.update({
   id: '/school-onboarding',
   path: '/school-onboarding',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MySubmissionsRoute = MySubmissionsRouteImport.update({
+  id: '/my-submissions',
+  path: '/my-submissions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminUsersRoute = AdminUsersRouteImport.update({
+  id: '/admin-users',
+  path: '/admin-users',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
@@ -120,8 +138,11 @@ export interface FileRoutesByFullPath {
   '/admin-audit-log': typeof AdminAuditLogRoute
   '/admin-integrations': typeof AdminIntegrationsRoute
   '/admin-settings': typeof AdminSettingsRoute
+  '/admin-users': typeof AdminUsersRoute
   '/login': typeof LoginRoute
+  '/my-submissions': typeof MySubmissionsRoute
   '/school-onboarding': typeof SchoolOnboardingRoute
+  '/school-settings': typeof SchoolSettingsRoute
   '/security-privacy': typeof SecurityPrivacyRoute
   '/user-settings': typeof UserSettingsRoute
   '/vertex-dashboard': typeof VertexDashboardRoute
@@ -139,8 +160,11 @@ export interface FileRoutesByTo {
   '/admin-audit-log': typeof AdminAuditLogRoute
   '/admin-integrations': typeof AdminIntegrationsRoute
   '/admin-settings': typeof AdminSettingsRoute
+  '/admin-users': typeof AdminUsersRoute
   '/login': typeof LoginRoute
+  '/my-submissions': typeof MySubmissionsRoute
   '/school-onboarding': typeof SchoolOnboardingRoute
+  '/school-settings': typeof SchoolSettingsRoute
   '/security-privacy': typeof SecurityPrivacyRoute
   '/user-settings': typeof UserSettingsRoute
   '/vertex-dashboard': typeof VertexDashboardRoute
@@ -159,8 +183,11 @@ export interface FileRoutesById {
   '/admin-audit-log': typeof AdminAuditLogRoute
   '/admin-integrations': typeof AdminIntegrationsRoute
   '/admin-settings': typeof AdminSettingsRoute
+  '/admin-users': typeof AdminUsersRoute
   '/login': typeof LoginRoute
+  '/my-submissions': typeof MySubmissionsRoute
   '/school-onboarding': typeof SchoolOnboardingRoute
+  '/school-settings': typeof SchoolSettingsRoute
   '/security-privacy': typeof SecurityPrivacyRoute
   '/user-settings': typeof UserSettingsRoute
   '/vertex-dashboard': typeof VertexDashboardRoute
@@ -180,8 +207,11 @@ export interface FileRouteTypes {
     | '/admin-audit-log'
     | '/admin-integrations'
     | '/admin-settings'
+    | '/admin-users'
     | '/login'
+    | '/my-submissions'
     | '/school-onboarding'
+    | '/school-settings'
     | '/security-privacy'
     | '/user-settings'
     | '/vertex-dashboard'
@@ -199,8 +229,11 @@ export interface FileRouteTypes {
     | '/admin-audit-log'
     | '/admin-integrations'
     | '/admin-settings'
+    | '/admin-users'
     | '/login'
+    | '/my-submissions'
     | '/school-onboarding'
+    | '/school-settings'
     | '/security-privacy'
     | '/user-settings'
     | '/vertex-dashboard'
@@ -218,8 +251,11 @@ export interface FileRouteTypes {
     | '/admin-audit-log'
     | '/admin-integrations'
     | '/admin-settings'
+    | '/admin-users'
     | '/login'
+    | '/my-submissions'
     | '/school-onboarding'
+    | '/school-settings'
     | '/security-privacy'
     | '/user-settings'
     | '/vertex-dashboard'
@@ -238,8 +274,11 @@ export interface RootRouteChildren {
   AdminAuditLogRoute: typeof AdminAuditLogRoute
   AdminIntegrationsRoute: typeof AdminIntegrationsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminUsersRoute: typeof AdminUsersRoute
   LoginRoute: typeof LoginRoute
+  MySubmissionsRoute: typeof MySubmissionsRoute
   SchoolOnboardingRoute: typeof SchoolOnboardingRoute
+  SchoolSettingsRoute: typeof SchoolSettingsRoute
   SecurityPrivacyRoute: typeof SecurityPrivacyRoute
   UserSettingsRoute: typeof UserSettingsRoute
   VertexDashboardRoute: typeof VertexDashboardRoute
@@ -274,6 +313,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SecurityPrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/school-settings': {
+      id: '/school-settings'
+      path: '/school-settings'
+      fullPath: '/school-settings'
+      preLoaderRoute: typeof SchoolSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/school-onboarding': {
       id: '/school-onboarding'
       path: '/school-onboarding'
@@ -281,11 +327,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SchoolOnboardingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/my-submissions': {
+      id: '/my-submissions'
+      path: '/my-submissions'
+      fullPath: '/my-submissions'
+      preLoaderRoute: typeof MySubmissionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin-users': {
+      id: '/admin-users'
+      path: '/admin-users'
+      fullPath: '/admin-users'
+      preLoaderRoute: typeof AdminUsersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin-settings': {
@@ -382,8 +442,11 @@ const rootRouteChildren: RootRouteChildren = {
   AdminAuditLogRoute: AdminAuditLogRoute,
   AdminIntegrationsRoute: AdminIntegrationsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
+  AdminUsersRoute: AdminUsersRoute,
   LoginRoute: LoginRoute,
+  MySubmissionsRoute: MySubmissionsRoute,
   SchoolOnboardingRoute: SchoolOnboardingRoute,
+  SchoolSettingsRoute: SchoolSettingsRoute,
   SecurityPrivacyRoute: SecurityPrivacyRoute,
   UserSettingsRoute: UserSettingsRoute,
   VertexDashboardRoute: VertexDashboardRoute,

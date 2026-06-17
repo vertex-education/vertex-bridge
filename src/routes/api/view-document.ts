@@ -50,13 +50,12 @@ export const Route = createFileRoute('/api/view-document')({
           headers.set('X-Content-Type-Options', 'nosniff')
           headers.set('Cache-Control', 'private, no-store')
 
-          const { getUserRole } = await import('#/lib/security')
+          const { isSchoolSession } = await import('#/lib/security')
           const { recordAuditEvent } = await import('#/lib/audit')
-          const role = getUserRole(session)
           await recordAuditEvent({
             session,
             request,
-            surface: role === 'school_user' ? 'client' : 'vertex',
+            surface: isSchoolSession(session) ? 'client' : 'vertex',
             category: 'file',
             action: 'file_opened',
             message: `${session.user.email} opened ${submission.fileName} for ${submission.schoolName}.`,

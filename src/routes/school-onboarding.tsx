@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, Send, Sparkles, X } from 'lucide-react'
+import { ExternalLink, Lock, Pencil, Send, Sparkles, X } from 'lucide-react'
 import { authClient } from '#/lib/auth-client'
 import { completeOnboardingTaskManually, getOnboardingTasks } from '#/lib/asana'
 import { uploadOnboardingFile } from '#/lib/uploads'
@@ -36,7 +36,38 @@ type ContractProfile = {
   clientType: string
   contact: string
   csOwner: string
+  contactRole: 'school_leader' | 'school_staff'
 }
+
+type SchoolContact = {
+  id: string
+  schoolName: string
+  userId: string | null
+  email: string
+  name: string | null
+  contactRole: 'school_leader' | 'school_staff'
+  invitedByUserId: string | null
+  invitedByEmail: string | null
+}
+
+type TaskAssignment = {
+  id: string
+  schoolName: string
+  asanaTaskId: string
+  assignedToUserId: string | null
+  assignedToEmail: string
+  assignedToName: string | null
+}
+
+type OnboardingOperationStatus =
+  | 'idle'
+  | 'preparing-upload'
+  | 'storing-file'
+  | 'syncing-asana'
+  | 'saving-task'
+  | 'refreshing'
+  | 'success'
+  | 'error'
 
 function escapeHtml(value: string) {
   return value
@@ -186,7 +217,7 @@ const listCurrentUserSchoolProfiles = createServerFn({ method: 'GET' })
   .handler(async () => {
     const { auth } = await import('#/lib/auth')
     const { db } = await import('#/db')
-    const { clientProfiles, invitations } = await import('#/db/schema')
+    const { clientProfiles, invitations, schoolContacts } = await import('#/db/schema')
     const { asc, eq } = await import('drizzle-orm')
 
     const request = await getServerRequest()
@@ -198,7 +229,7 @@ const listCurrentUserSchoolProfiles = createServerFn({ method: 'GET' })
       return []
     }
 
-    const [inviteRows, profileRows] = await Promise.all([
+    const [inviteRows, profileRows, contactRows, allProfiles] = await Promise.all([
       db
         .select()
         .from(invitations)
@@ -211,9 +242,21 @@ const listCurrentUserSchoolProfiles = createServerFn({ method: 'GET' })
         .where(eq(clientProfiles.primaryContactEmail, session.user.email))
         .orderBy(asc(clientProfiles.schoolName))
         .all(),
+      db
+        .select()
+        .from(schoolContacts)
+        .where(eq(schoolContacts.email, session.user.email))
+        .orderBy(asc(schoolContacts.schoolName))
+        .all(),
+      db
+        .select()
+        .from(clientProfiles)
+        .orderBy(asc(clientProfiles.schoolName))
+        .all(),
     ])
 
     const profilesBySchool = new Map<string, ContractProfile>()
+    const allProfilesBySchool = new Map(allProfiles.map((school) => [school.schoolName, school]))
 
     for (const profile of profileRows) {
       profilesBySchool.set(profile.schoolName, {
@@ -223,26 +266,208 @@ const listCurrentUserSchoolProfiles = createServerFn({ method: 'GET' })
         clientType: profile.clientType,
         contact: session.user.name || profile.primaryContactName,
         csOwner: profile.onboardingCoordinator,
+        contactRole: 'school_leader',
+      })
+    }
+
+    for (const contact of contactRows) {
+      const profile = allProfilesBySchool.get(contact.schoolName)
+      profilesBySchool.set(contact.schoolName, {
+        schoolName: contact.schoolName,
+        state: profile?.state || 'Not specified',
+        services: profile?.services || 'Not specified',
+        clientType: profile?.clientType || 'Not specified',
+        contact: session.user.name || contact.name || 'Signed-in user',
+        csOwner: profile?.onboardingCoordinator || 'Vertex onboarding team',
+        contactRole: contact.contactRole === 'school_leader' ? 'school_leader' : 'school_staff',
       })
     }
 
     for (const invite of inviteRows) {
       if (!invite.schoolName || profilesBySchool.has(invite.schoolName)) continue
+      const profile = allProfilesBySchool.get(invite.schoolName)
       profilesBySchool.set(invite.schoolName, {
         schoolName: invite.schoolName,
-        state: invite.state || 'Not specified',
-        services: invite.services || 'Not specified',
-        clientType: invite.clientType || 'Not specified',
+        state: profile?.state || invite.state || 'Not specified',
+        services: profile?.services || invite.services || 'Not specified',
+        clientType: profile?.clientType || invite.clientType || 'Not specified',
         contact: session.user.name || 'Signed-in user',
-        csOwner: 'Vertex onboarding team',
+        csOwner: profile?.onboardingCoordinator || 'Vertex onboarding team',
+        contactRole: invite.schoolContactRole === 'school_staff' ? 'school_staff' : 'school_leader',
       })
     }
 
     return Array.from(profilesBySchool.values())
   })
 
+const listSchoolContacts = createServerFn({ method: 'GET' })
+  .validator((schoolName: string) => schoolName)
+  .handler(async ({ data: schoolName }) => {
+    const { db } = await import('#/db')
+    const { clientProfiles, schoolContacts } = await import('#/db/schema')
+    const { assertCanAccessSchool, requireSession } = await import('#/lib/security')
+    const { eq } = await import('drizzle-orm')
+
+    const session = await requireSession()
+    await assertCanAccessSchool(session, schoolName)
+
+    const [contacts, profiles] = await Promise.all([
+      db
+        .select()
+        .from(schoolContacts)
+        .where(eq(schoolContacts.schoolName, schoolName))
+        .all(),
+      db
+        .select()
+        .from(clientProfiles)
+        .where(eq(clientProfiles.schoolName, schoolName))
+        .all(),
+    ])
+    const profile = profiles[0]
+    const contactsByEmail = new Map<string, SchoolContact>()
+
+    if (profile?.primaryContactEmail) {
+      contactsByEmail.set(profile.primaryContactEmail, {
+        id: `primary:${profile.primaryContactEmail}`,
+        schoolName,
+        userId: null,
+        email: profile.primaryContactEmail,
+        name: profile.primaryContactName,
+        contactRole: 'school_leader',
+        invitedByUserId: null,
+        invitedByEmail: null,
+      })
+    }
+
+    for (const contact of contacts) {
+      contactsByEmail.set(contact.email, {
+        id: contact.id,
+        schoolName: contact.schoolName,
+        userId: contact.userId,
+        email: contact.email,
+        name: contact.name,
+        contactRole: contact.contactRole === 'school_leader' ? 'school_leader' : 'school_staff',
+        invitedByUserId: contact.invitedByUserId,
+        invitedByEmail: contact.invitedByEmail,
+      })
+    }
+
+    return Array.from(contactsByEmail.values()).sort((a, b) => {
+      if (a.contactRole !== b.contactRole) return a.contactRole === 'school_leader' ? -1 : 1
+      return a.email.localeCompare(b.email)
+    })
+  })
+
+const listTaskAssignments = createServerFn({ method: 'GET' })
+  .validator((schoolName: string) => schoolName)
+  .handler(async ({ data: schoolName }) => {
+    const { db } = await import('#/db')
+    const { schoolOnboardingTaskAssignments } = await import('#/db/schema')
+    const { assertCanAccessSchool, requireSession } = await import('#/lib/security')
+    const { eq } = await import('drizzle-orm')
+
+    const session = await requireSession()
+    await assertCanAccessSchool(session, schoolName)
+
+    return db
+      .select({
+        id: schoolOnboardingTaskAssignments.id,
+        schoolName: schoolOnboardingTaskAssignments.schoolName,
+        asanaTaskId: schoolOnboardingTaskAssignments.asanaTaskId,
+        assignedToUserId: schoolOnboardingTaskAssignments.assignedToUserId,
+        assignedToEmail: schoolOnboardingTaskAssignments.assignedToEmail,
+        assignedToName: schoolOnboardingTaskAssignments.assignedToName,
+      })
+      .from(schoolOnboardingTaskAssignments)
+      .where(eq(schoolOnboardingTaskAssignments.schoolName, schoolName))
+      .all()
+  })
+
+const assignOnboardingTask = createServerFn({ method: 'POST' })
+  .validator((data: {
+    schoolName: string
+    taskId: string
+    assignedToEmail: string
+  }) => data)
+  .handler(async ({ data }) => {
+    const { db } = await import('#/db')
+    const { clientProfiles, schoolContacts, schoolOnboardingTaskAssignments } = await import('#/db/schema')
+    const { assertCanAccessSchool, assertTrustedOrigin, requireSession } = await import('#/lib/security')
+    const { eq } = await import('drizzle-orm')
+
+    await assertTrustedOrigin()
+    const session = await requireSession()
+    await assertCanAccessSchool(session, data.schoolName)
+
+    const [contacts, profiles] = await Promise.all([
+      db
+        .select()
+        .from(schoolContacts)
+        .where(eq(schoolContacts.schoolName, data.schoolName))
+        .all(),
+      db
+        .select()
+        .from(clientProfiles)
+        .where(eq(clientProfiles.schoolName, data.schoolName))
+        .all(),
+    ])
+    const profile = profiles[0]
+    const targetEmail = data.assignedToEmail.trim().toLowerCase()
+    const currentContact = contacts.find((contact: any) => contact.email === session.user.email)
+    const isSchoolLeader = profile?.primaryContactEmail === session.user.email || currentContact?.contactRole === 'school_leader'
+
+    const targetContact = contacts.find((contact: any) => contact.email === targetEmail)
+    const targetIsPrimary = profile?.primaryContactEmail === targetEmail
+
+    if (!targetContact && !targetIsPrimary) {
+      throw new Error('Choose a staff member from this school before assigning the task.')
+    }
+
+    if (!isSchoolLeader) {
+      throw new Error('Only School Leaders can change task owners.')
+    }
+
+    const now = new Date()
+    await db
+      .insert(schoolOnboardingTaskAssignments)
+      .values({
+        id: crypto.randomUUID(),
+        schoolName: data.schoolName,
+        asanaTaskId: data.taskId,
+        assignedToUserId: targetContact?.userId || null,
+        assignedToEmail: targetEmail,
+        assignedToName: targetContact?.name || (targetIsPrimary ? profile?.primaryContactName : null),
+        assignedByUserId: session.user.id,
+        assignedByEmail: session.user.email,
+        assignedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [schoolOnboardingTaskAssignments.schoolName, schoolOnboardingTaskAssignments.asanaTaskId],
+        set: {
+          assignedToUserId: targetContact?.userId || null,
+          assignedToEmail: targetEmail,
+          assignedToName: targetContact?.name || (targetIsPrimary ? profile?.primaryContactName : null),
+          assignedByUserId: session.user.id,
+          assignedByEmail: session.user.email,
+          assignedAt: now,
+          updatedAt: now,
+        },
+      })
+      .run()
+
+    return { success: true }
+  })
+
 const profileStepCount = 1
 const completedStageStorageKey = 'vertex-bridge:onboarding-complete-stage'
+const resumeStepStorageKey = 'vertex-bridge:onboarding-resume-step'
+
+type StoredResumeStep = {
+  type: 'profile' | 'task'
+  taskId?: string
+}
 
 function SkeletonBlock({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-neutral-200/80 ${className}`} />
@@ -365,8 +590,11 @@ function SchoolOnboardingPage() {
     services: 'SFO',
     clientType: 'Client',
     contact: 'the client',
-    csOwner: 'Vertex onboarding team'
+    csOwner: 'Vertex onboarding team',
+    contactRole: 'school_leader',
   })
+  const [showMyTasksOnly, setShowMyTasksOnly] = useState(false)
+  const [ownerEditorTaskId, setOwnerEditorTaskId] = useState<string | null>(null)
   const [showDiscrepancyForm, setShowDiscrepancyForm] = useState(false)
   const [discrepancy, setDiscrepancy] = useState('')
   const [discrepancySending, setDiscrepancySending] = useState(false)
@@ -378,9 +606,31 @@ function SchoolOnboardingPage() {
   
   // File upload state
   const [dragActive, setDragActive] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [uploadProgress, setUploadProgress] = useState<OnboardingOperationStatus>('idle')
   const [uploadError, setUploadError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pendingStatusTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
+
+  const clearPendingStatusTimers = () => {
+    pendingStatusTimersRef.current.forEach(clearTimeout)
+    pendingStatusTimersRef.current = []
+  }
+
+  const resetOperationStatus = () => {
+    clearPendingStatusTimers()
+    setUploadProgress('idle')
+    setUploadError('')
+  }
+
+  const schedulePendingStatus = (status: OnboardingOperationStatus, delayMs: number) => {
+    const timer = setTimeout(() => {
+      setUploadProgress((currentStatus) => (
+        ['success', 'error', 'idle', 'refreshing'].includes(currentStatus) ? currentStatus : status
+      ))
+    }, delayMs)
+
+    pendingStatusTimersRef.current.push(timer)
+  }
 
   // AI Helper state
   const [chatInput, setChatInput] = useState('')
@@ -427,6 +677,33 @@ function SchoolOnboardingPage() {
     queryFn: () => getOnboardingTasks({ data: clientName }),
     enabled: Boolean(session?.user && selectedProfile),
   })
+
+  const { data: schoolContacts = [] } = useQuery({
+    queryKey: ['school-contacts', selectedSchoolName],
+    queryFn: () => listSchoolContacts({ data: selectedSchoolName }),
+    enabled: Boolean(session?.user && selectedSchoolName),
+  })
+
+  const { data: taskAssignments = [] } = useQuery({
+    queryKey: ['school-task-assignments', selectedSchoolName],
+    queryFn: () => listTaskAssignments({ data: selectedSchoolName }),
+    enabled: Boolean(session?.user && selectedSchoolName),
+  })
+
+  const assignmentsByTaskId = new Map(taskAssignments.map((assignment) => [assignment.asanaTaskId, assignment]))
+  const currentUserEmail = session?.user?.email || ''
+  const currentSchoolContact = schoolContacts.find((contact) => contact.email === currentUserEmail)
+  const currentContactRole = selectedProfile?.contactRole || currentSchoolContact?.contactRole || 'school_staff'
+  const canAssignTasks = currentContactRole === 'school_leader'
+
+  const isTaskActionableForCurrentUser = (taskId: string) => {
+    const assignment = assignmentsByTaskId.get(taskId)
+    if (assignment) return assignment.assignedToEmail === currentUserEmail
+    return currentContactRole === 'school_leader'
+  }
+
+  const actionableTasks = tasks.filter((task) => isTaskActionableForCurrentUser(task.id))
+  const displayedTasks = showMyTasksOnly ? actionableTasks : tasks
 
   // Scroll to bottom of chat when history updates
   useEffect(() => {
@@ -482,6 +759,8 @@ function SchoolOnboardingPage() {
     if (!selectedProfile) return
 
     setProfile(selectedProfile)
+    setShowMyTasksOnly(selectedProfile.contactRole === 'school_staff')
+    setViewMode(selectedProfile.contactRole === 'school_staff' ? 'all' : 'journey')
   }, [selectedProfile])
 
   useEffect(() => {
@@ -491,15 +770,18 @@ function SchoolOnboardingPage() {
     setShowProfileStep(true)
     setActiveTaskIndex(0)
     setShowCompleteStage(false)
-    setViewMode('journey')
-    setUploadProgress('idle')
-    setUploadError('')
+    setViewMode(selectedProfile?.contactRole === 'school_staff' ? 'all' : 'journey')
+    resetOperationStatus()
     setDiscrepancy('')
     setDiscrepancyStatus(null)
-  }, [selectedSchoolName])
+    setShowMyTasksOnly(selectedProfile?.contactRole === 'school_staff')
+    setOwnerEditorTaskId(null)
+  }, [selectedSchoolName, selectedProfile?.contactRole])
 
   // Get active task
   const activeTask = tasks[activeTaskIndex] || null
+  const activeTaskAssignment = activeTask ? assignmentsByTaskId.get(activeTask.id) : null
+  const activeTaskActionable = activeTask ? isTaskActionableForCurrentUser(activeTask.id) : false
   const taskDescriptionUrls = activeTask ? extractUrls(activeTask.notes) : []
   const instructionText = activeTask?.notes
     ? taskDescriptionUrls.length > 0
@@ -514,9 +796,151 @@ function SchoolOnboardingPage() {
   const currentCompletedStageStorageKey = selectedSchoolName
     ? `${completedStageStorageKey}:${selectedSchoolName}`
     : completedStageStorageKey
+  const currentResumeStepStorageKey = selectedSchoolName
+    ? `${resumeStepStorageKey}:${selectedSchoolName}`
+    : resumeStepStorageKey
   const progressPercent = isLoading || totalCount === 0 ? 0 : Math.round((completedCount / totalCount) * 100)
   const allStepsComplete = !isLoading && tasks.length > 0 && progressPercent === 100
   const currentStepNumber = showProfileStep ? 1 : activeTask ? activeTaskIndex + profileStepCount + 1 : null
+  const isOperationPending = !['idle', 'success', 'error'].includes(uploadProgress)
+  const pendingStatus = {
+    'preparing-upload': {
+      title: 'Preparing upload',
+      message: 'Checking the selected file and preparing the secure upload.',
+    },
+    'storing-file': {
+      title: 'Storing file',
+      message: 'Uploading your document to Vertex Bridge storage. Keep this page open.',
+    },
+    'syncing-asana': {
+      title: 'Updating Asana',
+      message: 'Waiting for Asana to confirm the matching onboarding task update.',
+    },
+    'saving-task': {
+      title: 'Saving completion',
+      message: 'Marking this onboarding step complete in Asana.',
+    },
+    refreshing: {
+      title: 'Refreshing progress',
+      message: 'Asana is updated. Refreshing your onboarding checklist now.',
+    },
+  }[uploadProgress as Exclude<OnboardingOperationStatus, 'idle' | 'success' | 'error'>]
+
+  const saveResumeStep = (step: StoredResumeStep) => {
+    if (!selectedSchoolName) return
+    window.localStorage.setItem(currentResumeStepStorageKey, JSON.stringify(step))
+  }
+
+  const scopedTaskEntries = tasks
+    .map((task, index) => ({ task, index }))
+    .filter(({ task }) => isTaskActionableForCurrentUser(task.id))
+  const currentIncompleteTaskEntry = scopedTaskEntries.find(({ task }) => !task.completed)
+  const currentIncompleteTaskIndex = currentIncompleteTaskEntry?.index ?? -1
+  const currentIncompleteTask = currentIncompleteTaskEntry?.task ?? null
+  const currentIncompleteStepNumber = currentIncompleteTaskIndex >= 0
+    ? currentIncompleteTaskIndex + profileStepCount + 1
+    : null
+  const nextIncompleteTaskEntry = currentIncompleteTaskIndex >= 0
+    ? scopedTaskEntries.find(({ task, index }) => index > currentIncompleteTaskIndex && !task.completed)
+    : null
+  const canJumpToCurrentIncompleteStep = !isLoading
+    && Boolean(currentIncompleteTask)
+    && currentIncompleteTaskIndex >= 0
+    && (showProfileStep || showCompleteStage || viewMode !== 'journey' || activeTaskIndex !== currentIncompleteTaskIndex)
+
+  const goToCurrentIncompleteStep = () => {
+    if (!currentIncompleteTask || currentIncompleteTaskIndex < 0) return
+
+    setActiveTaskIndex(currentIncompleteTaskIndex)
+    setShowProfileStep(false)
+    setShowCompleteStage(false)
+    setViewMode('journey')
+    saveResumeStep({ type: 'task', taskId: currentIncompleteTask.id })
+    resetOperationStatus()
+  }
+
+  const currentJourneyStep = (() => {
+    if (isLoading) {
+      return {
+        label: 'Current step',
+        title: 'Loading onboarding steps...',
+        meta: 'Syncing your journey',
+      }
+    }
+
+    if (showCompleteStage && allStepsComplete) {
+      return {
+        label: 'Current step',
+        title: 'Onboarding complete',
+        meta: `${totalCount} of ${totalCount} steps`,
+      }
+    }
+
+    if (currentIncompleteTask && currentIncompleteStepNumber) {
+      return {
+        label: 'Current step',
+        title: currentIncompleteTask.name,
+        meta: `Step ${currentIncompleteStepNumber} of ${totalCount}`,
+      }
+    }
+
+    if (!allStepsComplete && tasks.length > 0) {
+      return {
+        label: 'Current step',
+        title: 'Your assigned steps are complete',
+        meta: 'Waiting on remaining school tasks',
+      }
+    }
+
+    return {
+      label: 'Current step',
+      title: 'No active step',
+      meta: 'Your journey is not available yet',
+    }
+  })()
+
+  const nextJourneyStep = (() => {
+    if (isLoading) {
+      return {
+        label: 'Next step',
+        title: 'Preparing next step',
+        meta: 'Available after sync',
+      }
+    }
+
+    if (showCompleteStage && allStepsComplete) {
+      return {
+        label: 'Next step',
+        title: 'Vertex review',
+        meta: 'Your submissions are ready',
+      }
+    }
+
+    if (currentIncompleteTask) {
+      const nextTask = nextIncompleteTaskEntry?.task
+      return {
+        label: 'Next step',
+        title: nextTask?.name || 'Complete assigned work',
+        meta: nextIncompleteTaskEntry
+          ? `Step ${nextIncompleteTaskEntry.index + profileStepCount + 1} of ${totalCount}`
+          : 'After the current assigned step',
+      }
+    }
+
+    if (!allStepsComplete && tasks.length > 0) {
+      return {
+        label: 'Next step',
+        title: 'No assigned next step',
+        meta: 'Use Full view to review school-wide tasks',
+      }
+    }
+
+    return {
+      label: 'Next step',
+      title: allStepsComplete ? 'Complete' : 'Finish remaining assigned work',
+      meta: allStepsComplete ? 'Ready for Vertex review' : 'Review the checklist',
+    }
+  })()
 
   const getPageContext = () => {
     const isCompleteStageVisible = showCompleteStage && allStepsComplete
@@ -623,6 +1047,50 @@ function SchoolOnboardingPage() {
   }, [currentCompletedStageStorageKey])
 
   useEffect(() => {
+    if (isLoading || !selectedSchoolName || currentContactRole !== 'school_leader') return
+
+    const storedStep = window.localStorage.getItem(currentResumeStepStorageKey)
+    if (!storedStep) return
+
+    let parsedStep: StoredResumeStep | null = null
+    try {
+      parsedStep = JSON.parse(storedStep) as StoredResumeStep
+    } catch {
+      window.localStorage.removeItem(currentResumeStepStorageKey)
+      return
+    }
+
+    if (parsedStep?.type === 'profile') {
+      setShowProfileStep(true)
+      setActiveTaskIndex(0)
+      setShowCompleteStage(false)
+      setViewMode('journey')
+      resetOperationStatus()
+      return
+    }
+
+    if (parsedStep?.type !== 'task' || !parsedStep.taskId) return
+
+    const savedTaskIndex = tasks.findIndex((task) => task.id === parsedStep.taskId)
+    const savedTaskIsActionable = savedTaskIndex >= 0 && isTaskActionableForCurrentUser(tasks[savedTaskIndex].id)
+    const nextTaskIndex = savedTaskIsActionable && !tasks[savedTaskIndex].completed
+      ? savedTaskIndex
+      : tasks.findIndex((task, index) => index > savedTaskIndex && !task.completed && isTaskActionableForCurrentUser(task.id))
+    const fallbackTaskIndex = nextTaskIndex >= 0
+      ? nextTaskIndex
+      : tasks.findIndex((task) => !task.completed && isTaskActionableForCurrentUser(task.id))
+
+    if (fallbackTaskIndex < 0) return
+
+    setActiveTaskIndex(fallbackTaskIndex)
+    setShowProfileStep(false)
+    setShowCompleteStage(false)
+    setViewMode('journey')
+    resetOperationStatus()
+    saveResumeStep({ type: 'task', taskId: tasks[fallbackTaskIndex].id })
+  }, [currentContactRole, currentResumeStepStorageKey, isLoading, selectedSchoolName, tasks])
+
+  useEffect(() => {
     if (isLoading) return
     if (!allStepsComplete) {
       setShowCompleteStage(false)
@@ -633,10 +1101,18 @@ function SchoolOnboardingPage() {
     window.localStorage.setItem(currentCompletedStageStorageKey, 'true')
   }, [allStepsComplete, currentCompletedStageStorageKey, isLoading])
 
+  useEffect(() => () => {
+    clearPendingStatusTimers()
+  }, [])
+
   // File drag & drop handlers
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    if (isOperationPending) {
+      setDragActive(false)
+      return
+    }
     if (e.type === "dragenter" || e.type === "dragover") {
       setDragActive(true)
     } else if (e.type === "dragleave") {
@@ -648,6 +1124,8 @@ function SchoolOnboardingPage() {
     e.preventDefault()
     e.stopPropagation()
     setDragActive(false)
+
+    if (isOperationPending) return
     
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       await uploadFile(e.dataTransfer.files[0])
@@ -655,20 +1133,30 @@ function SchoolOnboardingPage() {
   }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isOperationPending) return
     if (e.target.files && e.target.files[0]) {
       await uploadFile(e.target.files[0])
+      e.currentTarget.value = ''
     }
   }
 
   const uploadFile = async (file: File) => {
-    if (!activeTask) return
+    if (!activeTask || isOperationPending) return
+    if (!activeTaskActionable) {
+      setUploadProgress('error')
+      setUploadError('This step is assigned to another school contact. You can review it, but you cannot complete it from your account.')
+      return
+    }
     if (!activeTask.requiresFileUpload) {
       setUploadProgress('error')
       setUploadError('This onboarding step does not require a file upload. Use the complete button instead.')
       return
     }
-    setUploadProgress('loading')
+    clearPendingStatusTimers()
+    setUploadProgress('preparing-upload')
     setUploadError('')
+    schedulePendingStatus('storing-file', 350)
+    schedulePendingStatus('syncing-asana', 1600)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -678,10 +1166,12 @@ function SchoolOnboardingPage() {
 
     try {
       const result = await uploadOnboardingFile({ data: formData })
-      if (result.success) {
-        setUploadProgress('success')
+      if (result.success && result.asanaUpdated !== false) {
+        clearPendingStatusTimers()
+        setUploadProgress('refreshing')
         // Invalidate tasks query to trigger dynamic update
         await queryClient.invalidateQueries({ queryKey: ['onboarding-tasks'] })
+        setUploadProgress('success')
         
         // Add success notification in chat as well
         setChatHistory(prev => [
@@ -693,19 +1183,28 @@ function SchoolOnboardingPage() {
           }
         ])
       } else {
+        clearPendingStatusTimers()
         setUploadProgress('error')
-        setUploadError(result.asanaError || 'Could not complete Asana update.')
+        setUploadError(result.asanaError || 'Your file was stored, but Asana did not confirm the task update.')
       }
     } catch (err: any) {
+      clearPendingStatusTimers()
       setUploadProgress('error')
       setUploadError(err.message || 'File upload failed.')
     }
   }
 
   const completeManualTask = async () => {
-    if (!activeTask) return
-    setUploadProgress('loading')
+    if (!activeTask || isOperationPending) return
+    if (!activeTaskActionable) {
+      setUploadProgress('error')
+      setUploadError('This step is assigned to another school contact. You can review it, but you cannot complete it from your account.')
+      return
+    }
+    clearPendingStatusTimers()
+    setUploadProgress('saving-task')
     setUploadError('')
+    schedulePendingStatus('syncing-asana', 900)
 
     try {
       const result = await completeOnboardingTaskManually({
@@ -717,8 +1216,10 @@ function SchoolOnboardingPage() {
       })
 
       if (result.success) {
-        setUploadProgress('success')
+        clearPendingStatusTimers()
+        setUploadProgress('refreshing')
         await queryClient.invalidateQueries({ queryKey: ['onboarding-tasks'] })
+        setUploadProgress('success')
         setChatHistory(prev => [
           ...prev,
           {
@@ -728,10 +1229,12 @@ function SchoolOnboardingPage() {
           }
         ])
       } else {
+        clearPendingStatusTimers()
         setUploadProgress('error')
         setUploadError(result.asanaError || 'Could not complete this onboarding step.')
       }
     } catch (err: any) {
+      clearPendingStatusTimers()
       setUploadProgress('error')
       setUploadError(err.message || 'Could not complete this onboarding step.')
     }
@@ -741,12 +1244,35 @@ function SchoolOnboardingPage() {
     setShowProfileStep(false)
     setActiveTaskIndex(0)
     setViewMode('journey')
-    setUploadProgress('idle')
+    if (tasks[0]) {
+      saveResumeStep({ type: 'task', taskId: tasks[0].id })
+    }
+    resetOperationStatus()
   }
 
   const handleDiscrepancy = () => {
     setShowDiscrepancyForm(true)
     setDiscrepancyStatus(null)
+  }
+
+  const handleAssignTask = async (taskId: string, assignedToEmail: string) => {
+    try {
+      await assignOnboardingTask({
+        data: {
+          schoolName: clientName,
+          taskId,
+          assignedToEmail,
+        },
+      })
+      await queryClient.invalidateQueries({ queryKey: ['school-task-assignments', selectedSchoolName] })
+      setOwnerEditorTaskId(null)
+    } catch (err: any) {
+      setStaffInviteStatus({
+        type: 'error',
+        title: 'Assignment failed',
+        message: err.message || 'Unable to assign this task.',
+      })
+    }
   }
 
   const handleDiscrepancySubmit = async (event: React.FormEvent) => {
@@ -945,73 +1471,94 @@ function SchoolOnboardingPage() {
     <main className="page-wrap page-shell pb-28">
       {isLoading && <LoadingJourneyOverlay />}
       {/* Main Wizard / Checklist Panel (Left) */}
-      <section className="w-full space-y-6">
-        <div className="flex flex-col items-stretch justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <div className="page-kicker">
-              Onboarding Journey
-            </div>
-            <h1 className="page-title">
-              {clientName} Onboarding
-            </h1>
-          </div>
-
-          {/* Toggle Modes */}
-          {!allStepsComplete && (
-            <div className="grid grid-cols-2 rounded-xl border border-neutral-300 bg-neutral-200/60 p-1 sm:inline-flex">
-              <button
-                onClick={() => setViewMode('journey')}
-                className={`rounded-lg px-3 py-2 text-xs font-bold transition sm:px-4 sm:py-1.5 ${viewMode === 'journey' ? 'bg-white text-[var(--vertex-blue)] shadow-sm' : 'text-neutral-600 hover:text-black'}`}
-              >
-                Journey Wizard
-              </button>
-              <button
-                onClick={() => setViewMode('all')}
-                className={`rounded-lg px-3 py-2 text-xs font-bold transition sm:px-4 sm:py-1.5 ${viewMode === 'all' ? 'bg-white text-[var(--vertex-blue)] shadow-sm' : 'text-neutral-600 hover:text-black'}`}
-              >
-                All Steps ({journeyStepCount})
-              </button>
-            </div>
-          )}
-        </div>
-
+      <section className="w-full space-y-4">
         <div className="island-shell rounded-xl border border-[var(--line)] bg-white p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)] xl:items-end">
             <div className="min-w-0">
-              <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
-                Active School
+              <div className="page-kicker">
+                Onboarding Journey
               </div>
-              <div className="mt-1 text-sm font-semibold text-[var(--sea-ink-soft)]">
-                {schoolProfilesLoading
-                  ? 'Loading school access...'
-                  : schoolProfiles.length > 1
-                    ? 'Switch between schools to view each onboarding workspace.'
-                    : 'This onboarding workspace is scoped to your assigned school.'}
-              </div>
+              <h1 className="display-title mt-1 truncate text-2xl font-bold text-[var(--vertex-blue)] sm:text-3xl">
+                {clientName} Onboarding
+              </h1>
+
+              {!allStepsComplete && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold">
+                  <span className="uppercase tracking-wider text-[var(--sea-ink-soft)]">View</span>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('journey')}
+                    aria-pressed={viewMode === 'journey'}
+                    className={`rounded-md px-2 py-1 transition ${viewMode === 'journey' ? 'bg-[var(--foam)] text-[var(--vertex-blue)]' : 'text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]'}`}
+                  >
+                    Journey
+                  </button>
+                  <span className="text-[var(--chip-line)]">/</span>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('all')}
+                    aria-pressed={viewMode === 'all'}
+                    className={`rounded-md px-2 py-1 transition ${viewMode === 'all' ? 'bg-[var(--foam)] text-[var(--vertex-blue)]' : 'text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]'}`}
+                  >
+                    Checklist ({journeyStepCount})
+                  </button>
+                </div>
+              )}
+
             </div>
 
-            {schoolProfiles.length > 1 ? (
-              <div className="w-full sm:max-w-sm">
-                <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-[var(--sea-ink)]">
-                  School
-                </label>
-                <select
-                  value={selectedSchoolName}
-                  onChange={(event) => setSelectedSchoolName(event.target.value)}
-                  className="w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-2 text-sm font-bold text-[var(--sea-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--vertex-blue)]"
-                >
-                  {schoolProfiles.map((school) => (
-                    <option key={school.schoolName} value={school.schoolName}>
-                      {school.schoolName}
-                    </option>
-                  ))}
-                </select>
+            <div className="grid w-full max-w-[32rem] justify-self-end gap-2 xl:self-end">
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                {schoolProfiles.length > 1 ? (
+                  <div className="grid min-w-0 items-center gap-2 justify-self-start sm:grid-cols-[auto_minmax(0,16rem)]">
+                    <label className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]" htmlFor="school-workspace-select">
+                      Choose Your School
+                    </label>
+                    <select
+                      id="school-workspace-select"
+                      value={selectedSchoolName}
+                      onChange={(event) => setSelectedSchoolName(event.target.value)}
+                      className="min-h-9 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-1.5 text-sm font-bold text-[var(--sea-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--vertex-blue)]"
+                    >
+                      {schoolProfiles.map((school) => (
+                        <option key={school.schoolName} value={school.schoolName}>
+                          {school.schoolName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="grid min-w-0 items-center gap-2 justify-self-start sm:grid-cols-[auto_minmax(0,16rem)]">
+                    <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
+                      Your School:
+                    </div>
+                    <div className="min-h-9 rounded-xl border border-[var(--chip-line)] bg-[var(--foam)] px-4 py-1.5 text-sm font-bold text-[var(--sea-ink)]">
+                      {selectedProfile?.schoolName || 'No school assigned'}
+                    </div>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="rounded-xl border border-[var(--chip-line)] bg-[var(--foam)] px-4 py-3 text-sm font-bold text-[var(--sea-ink)]">
-                {selectedProfile?.schoolName || 'No school assigned'}
+
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="grid grid-cols-2 rounded-xl border border-neutral-300 bg-neutral-200/60 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowMyTasksOnly(true)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${showMyTasksOnly ? 'bg-white text-[var(--vertex-blue)] shadow-sm' : 'text-neutral-600 hover:text-black'}`}
+                  >
+                    My Tasks ({actionableTasks.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowMyTasksOnly(false)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${!showMyTasksOnly ? 'bg-white text-[var(--vertex-blue)] shadow-sm' : 'text-neutral-600 hover:text-black'}`}
+                  >
+                    Full ({tasks.length})
+                  </button>
+                </div>
+
               </div>
-            )}
+            </div>
           </div>
         </div>
 
@@ -1021,130 +1568,55 @@ function SchoolOnboardingPage() {
           </BrandedAlert>
         )}
 
-        <div className="island-shell rounded-xl border border-[var(--line)] bg-white p-3">
-          <div className="flex items-center gap-2 overflow-x-auto pb-1" aria-label="Client onboarding steps">
-            <button
-              type="button"
-              onClick={() => {
-                setShowProfileStep(true)
-                setShowCompleteStage(false)
-                setViewMode('journey')
-                setUploadProgress('idle')
-              }}
-              className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${
-                showProfileStep && viewMode === 'journey' && !showCompleteStage
-                  ? 'border-[var(--vertex-blue)] bg-[var(--vertex-blue)] text-white'
-                  : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-              }`}
-              aria-label="Go to step 1, Verify School Profile"
-            >
-              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
-                showProfileStep && viewMode === 'journey' && !showCompleteStage
-                  ? 'bg-white/20 text-white'
-                  : 'bg-green-100 text-green-700'
-              }`}>
-                ✓
-              </span>
-              <span>Step 1</span>
-            </button>
-
-            {isLoading ? (
-              Array.from({ length: 5 }).map((_, idx) => (
-                <div key={`step-skeleton-${idx}`} className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--chip-line)] bg-white px-3">
-                  <SkeletonBlock className="h-5 w-5 rounded-full" />
-                  <SkeletonBlock className="h-3 w-12" />
+        <div className="island-shell w-full rounded-xl border border-[var(--line)] bg-white p-4">
+          <div className="grid min-w-0 gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:col-span-2">
+              {[currentJourneyStep, nextJourneyStep].map((step) => (
+                <div key={step.label} className="min-w-0">
+                  <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
+                    {step.label}
+                  </div>
+                  <div className="mt-1 truncate text-sm font-bold text-[var(--sea-ink)]">
+                    {step.title}
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-[var(--sea-ink-soft)]">
+                    {step.meta}
+                  </div>
                 </div>
-              ))
-            ) : tasks.map((task, idx) => {
-              const stepNumber = idx + profileStepCount + 1
-              const isActive = idx === activeTaskIndex && viewMode === 'journey' && !showProfileStep && !showCompleteStage
+              ))}
+            </div>
 
-              return (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveTaskIndex(idx)
-                    setShowProfileStep(false)
-                    setShowCompleteStage(false)
-                    setViewMode('journey')
-                    setUploadProgress('idle')
-                  }}
-                  className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${
-                    isActive
-                      ? 'border-[var(--vertex-blue)] bg-[var(--vertex-blue)] text-white'
-                      : task.completed
-                        ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-                        : 'border-[var(--chip-line)] bg-white text-[var(--sea-ink-soft)] hover:bg-[var(--foam)] hover:text-[var(--vertex-blue)]'
-                  }`}
-                  aria-label={`Go to step ${stepNumber}, ${task.name}`}
-                >
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
-                    task.completed
-                      ? 'bg-green-100 text-green-700'
-                      : isActive
-                        ? 'bg-white/20 text-white'
-                        : 'bg-neutral-100 text-[var(--sea-ink-soft)]'
-                  }`}>
-                    {task.completed ? '✓' : stepNumber}
-                  </span>
-                  <span>Step {stepNumber}</span>
-                </button>
-              )
-            })}
-
-            <button
-              type="button"
-              onClick={() => {
-                if (!allStepsComplete) return
-                setShowCompleteStage(true)
-                window.localStorage.setItem(currentCompletedStageStorageKey, 'true')
-              }}
-              disabled={!allStepsComplete}
-              className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${
-                showCompleteStage && allStepsComplete
-                  ? 'border-[var(--vertex-blue)] bg-[var(--vertex-blue)] text-white'
-                  : allStepsComplete
-                    ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-                    : 'border-[var(--chip-line)] bg-white text-[var(--sea-ink-soft)] opacity-60'
-              }`}
-              aria-label="Go to completion stage"
-            >
-              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${
-                allStepsComplete
-                  ? showCompleteStage
-                    ? 'bg-white/20 text-white'
-                    : 'bg-green-100 text-green-700'
-                  : 'bg-neutral-100 text-[var(--sea-ink-soft)]'
-              }`}>
-                {allStepsComplete ? '✓' : totalCount}
-              </span>
-              <span>Complete</span>
-            </button>
+            {canJumpToCurrentIncompleteStep && (
+              <button
+                type="button"
+                onClick={goToCurrentIncompleteStep}
+                disabled={isOperationPending}
+                className="inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--chip-line)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Go to current step
+              </button>
+            )}
           </div>
-        </div>
 
-        {/* Progress Bar */}
-        <div className="island-shell flex flex-col gap-3 rounded-xl p-4 sm:flex-row sm:items-center sm:gap-4">
-          <div className="min-w-0 flex-1">
+          <div className="mt-4 border-t border-[var(--line)] pt-4">
             <div className="mb-1 flex flex-col gap-1 text-xs font-bold text-[var(--sea-ink)] sm:flex-row sm:justify-between">
               <span>Overall Completion</span>
               <span>
                 {isLoading ? 'Loading steps...' : `${completedCount} of ${totalCount} Steps (${progressPercent}%)`}
               </span>
             </div>
-            <div className="w-full bg-neutral-200 h-2.5 rounded-full overflow-hidden">
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-neutral-200">
               <div
-                className="bg-gradient-to-r from-[var(--vertex-blue)] to-[var(--vertex-gold)] h-full transition-all duration-500"
+                className="h-full bg-gradient-to-r from-[var(--vertex-blue)] to-[var(--vertex-gold)] transition-all duration-500"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
+            {allStepsComplete && (
+              <div className="mt-2 rounded-lg border border-green-200 bg-green-100 p-2 text-center text-xs font-bold text-green-700">
+                All Steps Complete
+              </div>
+            )}
           </div>
-          {allStepsComplete && (
-            <span className="rounded-lg border border-green-200 bg-green-100 p-2 text-center text-xs font-bold text-green-700 sm:animate-bounce">
-              🎉 All Steps Complete!
-            </span>
-          )}
         </div>
 
         {showCompleteStage && allStepsComplete ? (
@@ -1392,6 +1864,65 @@ function SchoolOnboardingPage() {
                   </div>
                 </div>
 
+                <div className="rounded-xl border border-[var(--chip-line)] bg-[var(--foam)] p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gray)]">
+                        Task Owner
+                      </div>
+                      <p className="mt-1 text-sm font-semibold text-[var(--sea-ink)]">
+                        {activeTaskAssignment
+                          ? activeTaskAssignment.assignedToName || activeTaskAssignment.assignedToEmail
+                          : currentContactRole === 'school_leader'
+                            ? 'School Leader'
+                            : 'Not assigned to you'}
+                      </p>
+                    </div>
+
+                    {canAssignTasks && schoolContacts.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setOwnerEditorTaskId((taskId) => taskId === activeTask.id ? null : activeTask.id)}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--chip-line)] bg-white px-3 py-2 text-xs font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)]"
+                      >
+                        <Pencil size={14} aria-hidden="true" />
+                        Change Owner
+                      </button>
+                    )}
+                  </div>
+
+                  {canAssignTasks && schoolContacts.length > 0 && ownerEditorTaskId === activeTask.id && (
+                    <div className="mt-3 rounded-lg border border-[var(--chip-line)] bg-white p-3">
+                      <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-[var(--sea-ink)]">
+                        New task owner
+                      </label>
+                      <select
+                        value={activeTaskAssignment?.assignedToEmail || ''}
+                        onChange={(event) => handleAssignTask(activeTask.id, event.target.value)}
+                        className="w-full rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 text-sm font-bold text-[var(--sea-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--vertex-blue)]"
+                      >
+                        <option value="" disabled>
+                          Select owner
+                        </option>
+                        {schoolContacts.map((contact) => (
+                          <option key={contact.id} value={contact.email}>
+                            {contact.name || contact.email} - {contact.contactRole === 'school_leader' ? 'Leader' : 'Staff'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {!activeTaskActionable && (
+                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-neutral-200 bg-white p-3 text-xs font-semibold text-[var(--sea-ink-soft)]">
+                      <Lock size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        This task is view-only for your account. It must be completed by {activeTaskAssignment?.assignedToName || activeTaskAssignment?.assignedToEmail || 'a School Leader'}.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 {/* Instructions */}
                 <div className="bg-neutral-50 p-4 rounded-xl border border-neutral-200/80 text-sm text-[var(--sea-ink)] leading-relaxed">
                   <h4 className="font-bold text-xs uppercase tracking-wider text-[var(--vertex-gray)] mb-2">
@@ -1406,7 +1937,7 @@ function SchoolOnboardingPage() {
                           href={url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 rounded-lg bg-[var(--vertex-blue)] px-4 py-2 text-xs font-bold text-white transition hover:bg-[var(--link-hover)]"
+                          className="inline-flex items-center gap-2 rounded-lg bg-[var(--vertex-blue)] px-4 py-2 text-xs font-bold text-white transition hover:bg-[var(--lagoon-deep)]"
                         >
                           <ExternalLink className="h-4 w-4" aria-hidden="true" />
                           {taskDescriptionUrls.length === 1 ? 'Open Link' : `Open Link ${index + 1}`}
@@ -1429,9 +1960,10 @@ function SchoolOnboardingPage() {
                         <button
                           onClick={() => {
                             // Allow re-upload
-                            setUploadProgress('idle')
+                            resetOperationStatus()
                             // Temporarily mark as uncompleted locally so they can upload again
                           }}
+                          disabled={isOperationPending}
                           className="mt-4 text-xs font-semibold underline text-[var(--vertex-blue)] hover:text-black cursor-pointer"
                         >
                           Upload a different document
@@ -1445,39 +1977,46 @@ function SchoolOnboardingPage() {
                         Submit Required Document
                       </h4>
                       
-                      <div
-                        onDragEnter={handleDrag}
-                        onDragOver={handleDrag}
-                        onDragLeave={handleDrag}
-                        onDrop={handleDrop}
-                        onClick={() => fileInputRef.current?.click()}
-                        className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-5 text-center transition sm:p-8 ${dragActive ? 'border-[var(--vertex-gold)] bg-[var(--hero-b)]' : 'border-[var(--chip-line)] hover:border-[var(--vertex-blue)] hover:bg-[var(--foam)]'}`}
-                      >
+                        <div
+                          onDragEnter={handleDrag}
+                          onDragOver={handleDrag}
+                          onDragLeave={handleDrag}
+                          onDrop={handleDrop}
+                          onClick={() => {
+                            if (!isOperationPending && activeTaskActionable) fileInputRef.current?.click()
+                          }}
+                          aria-busy={isOperationPending}
+                          className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-5 text-center transition sm:p-8 ${!activeTaskActionable ? 'cursor-not-allowed border-neutral-200 bg-neutral-50 opacity-70' : isOperationPending ? 'cursor-not-allowed border-blue-200 bg-blue-50/60 opacity-80' : dragActive ? 'cursor-pointer border-[var(--vertex-gold)] bg-[var(--hero-b)]' : 'cursor-pointer border-[var(--chip-line)] hover:border-[var(--vertex-blue)] hover:bg-[var(--foam)]'}`}
+                        >
                         <input
                           type="file"
                           ref={fileInputRef}
-                          onChange={handleFileChange}
-                          className="hidden"
-                          accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.csv,.doc,.docx"
-                        />
+                            onChange={handleFileChange}
+                            className="hidden"
+                            accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.csv,.doc,.docx"
+                            disabled={isOperationPending || !activeTaskActionable}
+                          />
                         
                         <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-[var(--vertex-gray)] mb-3">
                           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
                         </svg>
 
-                        <p className="text-sm font-semibold text-[var(--sea-ink)]">
-                          Drag and drop file here, or <span className="text-[var(--vertex-blue)] underline">browse files</span>
-                        </p>
+                          <p className="text-sm font-semibold text-[var(--sea-ink)]">
+                            {!activeTaskActionable ? 'View-only task' : isOperationPending ? 'Upload in progress...' : <>Drag and drop file here, or <span className="text-[var(--vertex-blue)] underline">browse files</span></>}
+                          </p>
                         <p className="text-xxs text-[var(--sea-ink-soft)] mt-1.5">
                           Supports PDF, Excel, CSV, Word, or PNG/JPG images (Max 15MB)
                         </p>
                       </div>
 
                       {/* Upload Status Details */}
-                      {uploadProgress === 'loading' && (
-                        <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl flex items-center gap-3">
+                      {isOperationPending && pendingStatus && (
+                        <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-3" role="status" aria-live="polite">
                           <div className="h-4 w-4 animate-spin rounded-full border-2 border-solid border-[var(--vertex-blue)] border-r-transparent" />
-                          <span className="text-xs font-semibold text-blue-700">Uploading file to Cloudflare R2 and completing Asana task...</span>
+                          <span className="text-left text-xs font-semibold text-blue-700">
+                            <span className="block">{pendingStatus.title}</span>
+                            <span className="mt-1 block font-normal text-blue-700/80">{pendingStatus.message}</span>
+                          </span>
                         </div>
                       )}
 
@@ -1501,23 +2040,26 @@ function SchoolOnboardingPage() {
                         </p>
                         <button
                           type="button"
-                          role="switch"
-                          aria-checked={false}
-                          onClick={completeManualTask}
-                          disabled={uploadProgress === 'loading'}
-                          className="mt-4 inline-flex items-center gap-3 rounded-full border border-[var(--vertex-blue)] bg-white px-3 py-2 text-xs font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)] disabled:cursor-not-allowed disabled:opacity-60"
+                            role="switch"
+                            aria-checked={false}
+                            onClick={completeManualTask}
+                            disabled={isOperationPending || !activeTaskActionable}
+                            className="mt-4 inline-flex items-center gap-3 rounded-full border border-[var(--vertex-blue)] bg-white px-3 py-2 text-xs font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)] disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <span className="flex h-6 w-11 items-center rounded-full bg-neutral-200 p-1 transition">
                             <span className="h-4 w-4 rounded-full bg-white shadow-sm" />
                           </span>
-                          <span>{uploadProgress === 'loading' ? 'Completing step...' : 'Complete'}</span>
+                          <span>{isOperationPending ? 'Saving...' : 'Complete'}</span>
                         </button>
                       </div>
 
-                      {uploadProgress === 'loading' && (
-                        <div className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                      {isOperationPending && pendingStatus && (
+                        <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4" role="status" aria-live="polite">
                           <div className="h-4 w-4 animate-spin rounded-full border-2 border-solid border-[var(--vertex-blue)] border-r-transparent" />
-                          <span className="text-xs font-semibold text-blue-700">Completing this onboarding step...</span>
+                          <span className="text-xs font-semibold text-blue-700">
+                            <span className="block">{pendingStatus.title}</span>
+                            <span className="mt-1 block font-normal text-blue-700/80">{pendingStatus.message}</span>
+                          </span>
                         </div>
                       )}
 
@@ -1539,12 +2081,16 @@ function SchoolOnboardingPage() {
                     onClick={() => {
                       if (activeTaskIndex === 0) {
                         setShowProfileStep(true)
-                        setUploadProgress('idle')
+                        saveResumeStep({ type: 'profile' })
+                        resetOperationStatus()
                       } else {
-                        setActiveTaskIndex(prev => prev - 1)
-                        setUploadProgress('idle')
+                        const previousTaskIndex = activeTaskIndex - 1
+                        setActiveTaskIndex(previousTaskIndex)
+                        saveResumeStep({ type: 'task', taskId: tasks[previousTaskIndex].id })
+                        resetOperationStatus()
                       }
                     }}
+                    disabled={isOperationPending}
                     className="rounded-lg border border-[var(--chip-line)] px-4 py-2 text-xs font-bold transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
                   >
                     Previous
@@ -1552,11 +2098,13 @@ function SchoolOnboardingPage() {
                   <button
                     onClick={() => {
                       if (activeTaskIndex < tasks.length - 1) {
-                        setActiveTaskIndex(prev => prev + 1)
-                        setUploadProgress('idle')
+                        const nextTaskIndex = activeTaskIndex + 1
+                        setActiveTaskIndex(nextTaskIndex)
+                        saveResumeStep({ type: 'task', taskId: tasks[nextTaskIndex].id })
+                        resetOperationStatus()
                       }
                     }}
-                    disabled={activeTaskIndex === tasks.length - 1}
+                    disabled={isOperationPending || activeTaskIndex === tasks.length - 1}
                     className="rounded-lg border border-[var(--chip-line)] px-4 py-2 text-xs font-bold transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
                   >
                     Next
@@ -1580,6 +2128,7 @@ function SchoolOnboardingPage() {
                   setShowProfileStep(true)
                   setViewMode('journey')
                   setShowCompleteStage(false)
+                  saveResumeStep({ type: 'profile' })
                 }}
                 className="flex cursor-pointer flex-col gap-2 rounded-lg px-2 py-3.5 transition hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between"
               >
@@ -1597,41 +2146,103 @@ function SchoolOnboardingPage() {
                 </span>
               </div>
 
-              {tasks.map((task, idx) => (
-                <div
-                  key={task.id}
-                  onClick={() => {
-                    setActiveTaskIndex(idx)
-                    setShowProfileStep(false)
-                    setViewMode('journey')
-                  }}
-                  className="flex flex-col gap-2 rounded-lg px-2 py-3.5 transition hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    {task.completed ? (
-                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-green-700 font-bold text-xs">
-                        ✓
-                      </span>
-                    ) : (
-                      <span className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 text-neutral-400 font-bold text-xs">
-                        {idx + profileStepCount + 1}
-                      </span>
-                    )}
-                    <div className="min-w-0 text-sm font-bold text-[var(--sea-ink)]">
-                      {task.name}
-                      {task.isUrgent && (
-                        <span className="ml-2 px-2 py-0.5 text-[8px] rounded-full bg-red-100 text-red-600 uppercase font-extrabold tracking-wide">
-                          Urgent
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <span className={`text-xs font-semibold ${task.dueDate ? 'text-[var(--sea-ink-soft)]' : 'text-neutral-300 italic'}`}>
-                    {task.dueDate ? new Date(task.dueDate).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'No due date'}
-                  </span>
+              {displayedTasks.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--chip-line)] bg-white p-5 text-sm font-semibold text-[var(--sea-ink-soft)]">
+                  No tasks are assigned to you yet. Switch to Full Journey to review the full onboarding process.
                 </div>
-              ))}
+              ) : displayedTasks.map((task) => {
+                const idx = tasks.findIndex((candidate) => candidate.id === task.id)
+                const assignment = assignmentsByTaskId.get(task.id)
+                const taskActionable = isTaskActionableForCurrentUser(task.id)
+
+                return (
+                  <div
+                    key={task.id}
+                    onClick={() => {
+                      setActiveTaskIndex(idx)
+                      setShowProfileStep(false)
+                      setViewMode('journey')
+                      saveResumeStep({ type: 'task', taskId: task.id })
+                    }}
+                    className={`flex flex-col gap-3 rounded-lg px-2 py-3.5 transition hover:bg-neutral-50 ${taskActionable ? '' : 'opacity-75'}`}
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-3">
+                        {task.completed ? (
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-green-700 font-bold text-xs">
+                            ✓
+                          </span>
+                        ) : taskActionable ? (
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 text-neutral-400 font-bold text-xs">
+                            {idx + profileStepCount + 1}
+                          </span>
+                        ) : (
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-200 bg-neutral-50 text-neutral-400">
+                            <Lock size={12} aria-hidden="true" />
+                          </span>
+                        )}
+                        <div className="min-w-0 text-sm font-bold text-[var(--sea-ink)]">
+                          {task.name}
+                          {task.isUrgent && (
+                            <span className="ml-2 px-2 py-0.5 text-[8px] rounded-full bg-red-100 text-red-600 uppercase font-extrabold tracking-wide">
+                              Urgent
+                            </span>
+                          )}
+                          {assignment && (
+                            <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-[var(--sea-ink-soft)]">
+                              Assigned to {assignment.assignedToName || assignment.assignedToEmail}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        <span className={`text-xs font-semibold ${task.dueDate ? 'text-[var(--sea-ink-soft)]' : 'text-neutral-300 italic'}`}>
+                          {task.dueDate ? new Date(task.dueDate).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'No due date'}
+                        </span>
+                        {canAssignTasks && schoolContacts.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setOwnerEditorTaskId((taskId) => taskId === task.id ? null : task.id)
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--chip-line)] bg-white px-2.5 py-1.5 text-xs font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)]"
+                          >
+                            <Pencil size={13} aria-hidden="true" />
+                            Change Owner
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {canAssignTasks && schoolContacts.length > 0 && ownerEditorTaskId === task.id && (
+                      <div
+                        className="rounded-lg border border-[var(--chip-line)] bg-white p-3"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-[var(--sea-ink)]">
+                          New task owner
+                        </label>
+                        <select
+                          value={assignment?.assignedToEmail || ''}
+                          onChange={(event) => handleAssignTask(task.id, event.target.value)}
+                          className="w-full rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 text-sm font-bold text-[var(--sea-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--vertex-blue)]"
+                        >
+                          <option value="" disabled>
+                            Select owner
+                          </option>
+                          {schoolContacts.map((contact) => (
+                            <option key={contact.id} value={contact.email}>
+                              {contact.name || contact.email} - {contact.contactRole === 'school_leader' ? 'Leader' : 'Staff'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

@@ -7,6 +7,8 @@ import { listInvites, listInviteSchools, revokeInvite, sendInvite } from '#/lib/
 import { BrandedAlert } from '#/components/BrandedAlert'
 import { getServerRequest } from '#/lib/security'
 
+type InviteRoleOption = 'school_leader' | 'school_staff' | 'vertex_user' | 'admin'
+
 const getAdminAccess = createServerFn({ method: 'GET' }).handler(async () => {
   const { auth } = await import('#/lib/auth')
   const request = await getServerRequest()
@@ -45,7 +47,7 @@ export const Route = createFileRoute('/admin')({
 function AdminPage() {
   const queryClient = useQueryClient()
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'school_user' | 'vertex_user' | 'admin'>('school_user')
+  const [role, setRole] = useState<InviteRoleOption>('school_leader')
   const [selectedSchoolName, setSelectedSchoolName] = useState('')
   const [schoolMenuOpen, setSchoolMenuOpen] = useState(false)
   const schoolMenuRef = useRef<HTMLDivElement>(null)
@@ -106,7 +108,8 @@ function AdminPage() {
         data: {
           email: email.trim(),
           role,
-          schoolName: role === 'school_user' ? selectedSchoolName : undefined,
+          schoolContactRole: role === 'school_leader' || role === 'school_staff' ? role : undefined,
+          schoolName: role === 'school_leader' || role === 'school_staff' ? selectedSchoolName : undefined,
         },
       }),
     onSuccess: (resp) => {
@@ -142,11 +145,11 @@ function AdminPage() {
       return
     }
 
-    if (role === 'school_user' && !selectedSchoolName) {
+    if ((role === 'school_leader' || role === 'school_staff') && !selectedSchoolName) {
       setAlertStatus({
         type: 'error',
         title: 'School required',
-        message: 'Select the school this client invite should onboard.',
+        message: 'Select the school this invite should onboard.',
       })
       return
     }
@@ -183,7 +186,15 @@ function AdminPage() {
   const roleLabel = (inviteRole: string) => {
     if (inviteRole === 'admin') return 'Vertex Admin'
     if (inviteRole === 'vertex_user') return 'Vertex Staff'
-    return 'School Client'
+    return 'School Leader'
+  }
+
+  const schoolRoleLabel = (invite: { role: string; schoolContactRole?: string | null }) => {
+    if (invite.role !== 'school_user' && invite.role !== 'school_leader' && invite.role !== 'school_staff') return roleLabel(invite.role)
+    if (invite.role === 'school_staff') return 'School Staff'
+    if (invite.role === 'school_leader') return 'School Leader'
+    if (invite.schoolContactRole === 'school_staff') return 'School Staff'
+    return 'School Leader'
   }
 
   const inviteStatus = (invite: { accepted: boolean; expiresAt: Date | string }) => {
@@ -232,8 +243,8 @@ function AdminPage() {
               />
             </div>
 
-            <div className={role === 'school_user' ? 'min-w-0' : 'hidden lg:block'}>
-              {role === 'school_user' && (
+            <div className={role === 'school_leader' || role === 'school_staff' ? 'min-w-0' : 'hidden lg:block'}>
+              {(role === 'school_leader' || role === 'school_staff') && (
                 <>
                   <label className="block text-xs font-bold uppercase tracking-wider mb-1 text-[var(--sea-ink)]">
                     School
@@ -296,16 +307,17 @@ function AdminPage() {
               <select
                 value={role}
                 onChange={(e) => {
-                  const nextRole = e.target.value as 'school_user' | 'vertex_user' | 'admin'
+                  const nextRole = e.target.value as InviteRoleOption
                   setRole(nextRole)
-                  if (nextRole !== 'school_user') {
+                  if (nextRole !== 'school_leader' && nextRole !== 'school_staff') {
                     setSelectedSchoolName('')
                     setSchoolMenuOpen(false)
                   }
                 }}
                 className="w-full px-4 py-2 border border-[var(--chip-line)] rounded-xl bg-white"
               >
-                <option value="school_user">School Client</option>
+                <option value="school_leader">School Leader</option>
+                <option value="school_staff">School Staff</option>
                 <option value="vertex_user">Vertex Staff</option>
                 <option value="admin">Vertex Admin</option>
               </select>
@@ -320,15 +332,15 @@ function AdminPage() {
             </button>
           </form>
 
-          {role === 'school_user' && selectedSchool && (
+          {(role === 'school_leader' || role === 'school_staff') && selectedSchool && (
             <div className="mt-3 rounded-xl border border-[var(--chip-line)] bg-[var(--foam)] p-3 text-xs font-semibold text-[var(--sea-ink-soft)]">
-              This invite will onboard {selectedSchool.schoolName} for {selectedSchool.services}. Primary contact: {selectedSchool.primaryContactName} ({selectedSchool.primaryContactEmail}).
+              This invite will onboard {selectedSchool.schoolName} for {selectedSchool.services} as {role === 'school_leader' ? 'School Leader' : 'School Staff'}. Primary contact: {selectedSchool.primaryContactName} ({selectedSchool.primaryContactEmail}).
             </div>
           )}
 
-          {role === 'school_user' && !inviteSchoolsLoading && inviteSchools.length === 0 && (
+          {(role === 'school_leader' || role === 'school_staff') && !inviteSchoolsLoading && inviteSchools.length === 0 && (
             <BrandedAlert variant="warning" title="No schools available" className="mt-5">
-              Add client profiles to the database before sending school client invites.
+              Add client profiles to the database before sending school invites.
             </BrandedAlert>
           )}
 
@@ -403,14 +415,14 @@ function AdminPage() {
                       <div className="min-w-0">
                         <div className="break-words font-bold text-[var(--sea-ink)] md:truncate">{invite.email}</div>
                         <div className="mt-1 text-xs text-[var(--sea-ink-soft)] md:hidden">
-                          {invite.schoolName ? `${invite.schoolName} - ` : ''}{roleLabel(invite.role)} - {status} - Sent {formatDate(invite.createdAt)}
+                          {invite.schoolName ? `${invite.schoolName} - ` : ''}{schoolRoleLabel(invite)} - {status} - Sent {formatDate(invite.createdAt)}
                         </div>
                       </div>
                       <div className="hidden min-w-0 font-semibold text-[var(--sea-ink)] md:block md:truncate">
                         {invite.schoolName ?? '-'}
                       </div>
                       <div className="hidden font-semibold text-[var(--sea-ink)] md:block">
-                        {roleLabel(invite.role)}
+                        {schoolRoleLabel(invite)}
                       </div>
                       <div className="hidden md:block">
                         <span className="rounded-full bg-[var(--foam)] px-2.5 py-1 text-xs font-bold text-[var(--sea-ink)]">

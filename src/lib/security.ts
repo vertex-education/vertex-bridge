@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm'
 export type AppSession = NonNullable<Awaited<ReturnType<typeof getCurrentSession>>>
 
 const staffRoles = new Set(['vertex_user', 'admin'])
+const schoolRoles = new Set(['school_leader', 'school_staff', 'school_user'])
 
 function getAllowedOrigins(request: Request) {
   const currentOrigin = new URL(request.url).origin
@@ -57,6 +58,10 @@ export function isStaffSession(session: AppSession) {
   return staffRoles.has(getUserRole(session) || '')
 }
 
+export function isSchoolSession(session: AppSession) {
+  return schoolRoles.has(getUserRole(session) || '')
+}
+
 export async function requireStaffSession() {
   const session = await requireSession()
   if (!isStaffSession(session)) {
@@ -79,10 +84,10 @@ export async function getSessionSchoolNames(session: AppSession) {
   if (isStaffSession(session)) return null
 
   const { db } = await import('#/db')
-  const { clientProfiles, invitations } = await import('#/db/schema')
+  const { clientProfiles, invitations, schoolContacts } = await import('#/db/schema')
   const email = session.user.email
 
-  const [inviteRows, clientRows] = await Promise.all([
+  const [inviteRows, clientRows, contactRows] = await Promise.all([
     db
       .select({ schoolName: invitations.schoolName })
       .from(invitations)
@@ -93,6 +98,11 @@ export async function getSessionSchoolNames(session: AppSession) {
       .from(clientProfiles)
       .where(eq(clientProfiles.primaryContactEmail, email))
       .all(),
+    db
+      .select({ schoolName: schoolContacts.schoolName })
+      .from(schoolContacts)
+      .where(eq(schoolContacts.email, email))
+      .all(),
   ])
 
   const names = new Set<string>()
@@ -100,6 +110,9 @@ export async function getSessionSchoolNames(session: AppSession) {
     if (row.schoolName) names.add(row.schoolName)
   }
   for (const row of clientRows) {
+    if (row.schoolName) names.add(row.schoolName)
+  }
+  for (const row of contactRows) {
     if (row.schoolName) names.add(row.schoolName)
   }
 

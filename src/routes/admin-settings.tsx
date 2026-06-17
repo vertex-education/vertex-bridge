@@ -69,6 +69,15 @@ function AdminSettingsPage() {
               </span>
             </Link>
             <Link
+              to="/admin-users"
+              className="rounded-xl border border-[var(--chip-line)] bg-white p-4 text-sm font-bold text-[var(--vertex-blue)] no-underline transition hover:-translate-y-0.5 hover:bg-[var(--foam)]"
+            >
+              User Accounts
+              <span className="mt-1 block text-xs font-semibold text-[var(--sea-ink-soft)]">
+                Change existing user names and roles in the database.
+              </span>
+            </Link>
+            <Link
               to="/vertex-dashboard"
               className="rounded-xl border border-[var(--chip-line)] bg-white p-4 text-sm font-bold text-[var(--vertex-blue)] no-underline transition hover:-translate-y-0.5 hover:bg-[var(--foam)]"
             >

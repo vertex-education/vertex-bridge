@@ -103,7 +103,13 @@ function UserSettingsPage() {
 
   const role = session?.user ? (session.user as any).role : null
   const roleLabel =
-    role === 'admin' ? 'Admin' : role === 'vertex_user' ? 'Vertex Staff' : 'Client'
+    role === 'admin'
+      ? 'Admin'
+      : role === 'vertex_user'
+        ? 'Vertex Staff'
+        : role === 'school_staff'
+          ? 'School Staff'
+          : 'School Leader'
 
   const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault()

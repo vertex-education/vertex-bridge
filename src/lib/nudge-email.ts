@@ -27,7 +27,8 @@ async function getEnv() {
 export async function resolveSchoolNudgeRecipient(schoolName: string): Promise<NudgeEmailRecipient | null> {
   const { db } = await import('#/db')
   const { clientProfiles, invitations, user } = await import('#/db/schema')
-  const { and, desc, eq } = await import('drizzle-orm')
+  const { and, desc, eq, inArray } = await import('drizzle-orm')
+  const schoolRoles = ['school_leader', 'school_staff', 'school_user']
 
   const acceptedInvites = await db
     .select({
@@ -38,7 +39,7 @@ export async function resolveSchoolNudgeRecipient(schoolName: string): Promise<N
     .leftJoin(user, eq(user.email, invitations.email))
     .where(and(
       eq(invitations.schoolName, schoolName),
-      eq(invitations.role, 'school_user'),
+      inArray(invitations.role, schoolRoles),
       eq(invitations.accepted, true),
     ))
     .orderBy(desc(invitations.createdAt))
@@ -76,7 +77,7 @@ export async function resolveSchoolNudgeRecipient(schoolName: string): Promise<N
     .from(invitations)
     .where(and(
       eq(invitations.schoolName, schoolName),
-      eq(invitations.role, 'school_user'),
+      inArray(invitations.role, schoolRoles),
     ))
     .orderBy(desc(invitations.createdAt))
     .limit(1)

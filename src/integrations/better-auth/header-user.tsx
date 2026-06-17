@@ -1,6 +1,6 @@
 import { authClient } from '#/lib/auth-client'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ChevronDown, LogOut, Settings, Shield, UserCircle } from 'lucide-react'
+import { ChevronDown, GraduationCap, LogOut, Settings, Shield, UserCircle } from 'lucide-react'
 import { useState } from 'react'
 
 export default function BetterAuthHeader() {
@@ -16,11 +16,14 @@ export default function BetterAuthHeader() {
 
   if (session?.user) {
     const role = (session.user as any).role
+    const isSchoolRole = role === 'school_leader' || role === 'school_staff' || role === 'school_user'
     const roleLabel = role === 'admin' 
       ? 'Admin' 
       : role === 'vertex_user' 
         ? 'Vertex Staff' 
-        : 'Client'
+        : role === 'school_staff'
+          ? 'School Staff'
+          : 'School Leader'
     
     return (
       <div className="relative flex items-center gap-3">
@@ -64,6 +67,18 @@ export default function BetterAuthHeader() {
               <Settings size={16} strokeWidth={2.3} />
               User Settings
             </Link>
+
+            {isSchoolRole && (
+              <Link
+                to="/school-settings"
+                role="menuitem"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-3 px-4 py-2.5 font-semibold text-[var(--sea-ink)] no-underline hover:bg-[var(--foam)]"
+              >
+                <GraduationCap size={16} strokeWidth={2.3} />
+                School Settings
+              </Link>
+            )}
 
             {role === 'admin' && (
               <Link

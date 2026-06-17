@@ -363,6 +363,153 @@ pre code {
   border-color: color-mix(in oklab, var(--lagoon-deep) 35%, var(--line));
 }
 
+.hero-artwork::before {
+  content: '';
+  position: absolute;
+  inset: 0.45rem;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 0.75rem;
+  opacity: 0.5;
+  background: linear-gradient(
+    112deg,
+    transparent 0%,
+    transparent 36%,
+    rgba(255, 255, 255, 0.34) 45%,
+    rgba(255, 255, 255, 0.08) 52%,
+    transparent 64%,
+    transparent 100%
+  );
+  transform: translateX(-130%) skewX(-12deg);
+  animation: hero-image-shimmer 6.8s ease-in-out infinite;
+}
+
+.hero-sparkle {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(203, 160, 82, 0.42),
+    0 0 14px rgba(255, 255, 255, 0.9),
+    0 0 26px rgba(203, 160, 82, 0.48);
+  opacity: 0;
+  transform: scale(0.72);
+  animation: hero-image-sparkle 5.6s ease-in-out infinite;
+}
+
+.hero-sparkle::before,
+.hero-sparkle::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 220%;
+  height: 1px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  transform: translate(-50%, -50%);
+}
+
+.hero-sparkle::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.hero-sparkle-one {
+  top: 18%;
+  right: 18%;
+}
+
+.hero-sparkle-two {
+  top: 43%;
+  left: 15%;
+  width: 0.42rem;
+  height: 0.42rem;
+  animation-delay: 1.7s;
+}
+
+.hero-sparkle-three {
+  right: 24%;
+  bottom: 19%;
+  width: 0.46rem;
+  height: 0.46rem;
+  animation-delay: 3.2s;
+}
+
+.hero-sparkle-four {
+  top: 30%;
+  right: 34%;
+  width: 0.36rem;
+  height: 0.36rem;
+  animation-delay: 0.9s;
+}
+
+.hero-sparkle-five {
+  left: 24%;
+  bottom: 33%;
+  width: 0.38rem;
+  height: 0.38rem;
+  animation-delay: 2.6s;
+}
+
+.hero-sparkle-six {
+  top: 63%;
+  right: 13%;
+  width: 0.32rem;
+  height: 0.32rem;
+  animation-delay: 4.1s;
+}
+
+@keyframes hero-image-shimmer {
+  0%,
+  38% {
+    opacity: 0;
+    transform: translateX(-130%) skewX(-12deg);
+  }
+  46% {
+    opacity: 0.5;
+  }
+  62% {
+    opacity: 0.16;
+    transform: translateX(132%) skewX(-12deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(132%) skewX(-12deg);
+  }
+}
+
+@keyframes hero-image-sparkle {
+  0%,
+  18%,
+  100% {
+    opacity: 0;
+    transform: scale(0.72) rotate(0deg);
+  }
+  26% {
+    opacity: 0.78;
+    transform: scale(1) rotate(18deg);
+  }
+  36% {
+    opacity: 0;
+    transform: scale(0.88) rotate(32deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-artwork::before,
+  .hero-sparkle {
+    animation: none;
+  }
+
+  .hero-artwork::before {
+    opacity: 0.14;
+    transform: none;
+  }
+}
+
 button,
 .island-shell,
 .app-card,
