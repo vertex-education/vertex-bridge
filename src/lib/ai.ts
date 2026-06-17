@@ -37,7 +37,7 @@ type PageContext = {
   pageName: string
   path: string
   viewMode: 'journey' | 'all' | 'complete'
-  stage: 'loading' | 'error' | 'profile-confirmation' | 'task-active' | 'task-completed' | 'all-steps' | 'complete'
+  stage: 'loading' | 'error' | 'profile-confirmation' | 'intake-question' | 'task-active' | 'task-completed' | 'all-steps' | 'complete'
   stageLabel: string
   currentStepNumber: number | null
   totalSteps: number

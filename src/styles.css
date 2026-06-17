@@ -559,6 +559,73 @@ a {
   animation: rise-in 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.chat-popout-enter {
+  transform-origin: right bottom;
+  animation: chat-popout-enter 180ms cubic-bezier(0.2, 1.1, 0.32, 1) both;
+  will-change: opacity, transform;
+}
+
+.completion-celebration {
+  animation: completion-celebration-card 2800ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.completion-celebration-mark {
+  animation: completion-celebration-mark 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.completion-celebration-mark span {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 50%, white 0 22%, transparent 23%),
+    linear-gradient(135deg, var(--tertiary-green), var(--vertex-gold));
+}
+
+.completion-celebration-burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.completion-celebration-burst span {
+  --burst-index: 0;
+  --burst-x: 0rem;
+  --burst-y: 0rem;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--vertex-gold);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  animation: completion-celebration-burst 900ms ease-out both;
+  animation-delay: calc(var(--burst-index) * 28ms);
+}
+
+.completion-celebration-burst span:nth-child(3n + 1) {
+  background: var(--vertex-blue);
+}
+
+.completion-celebration-burst span:nth-child(3n + 2) {
+  background: var(--tertiary-green);
+}
+
+.completion-progress-pulse {
+  animation: completion-progress-pulse 900ms ease-out both;
+}
+
+.completion-page {
+  animation: completion-page-enter 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.completion-summary-panel {
+  animation: completion-summary-panel-enter 900ms cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -567,6 +634,115 @@ a {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes chat-popout-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(18px) translateY(8px) scale(0.94);
+  }
+  72% {
+    opacity: 1;
+    transform: translateX(-2px) translateY(0) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) translateY(0) scale(1);
+  }
+}
+
+@keyframes completion-celebration-card {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -12px) scale(0.96);
+  }
+  12%,
+  78% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.98);
+  }
+}
+
+@keyframes completion-celebration-mark {
+  0% {
+    transform: scale(0.72) rotate(-10deg);
+  }
+  45% {
+    transform: scale(1.14) rotate(7deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes completion-celebration-burst {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--burst-x)), calc(-50% + var(--burst-y))) scale(0.85);
+  }
+}
+
+@keyframes completion-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes completion-summary-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes completion-progress-pulse {
+  0% {
+    filter: saturate(1);
+    box-shadow: 0 0 0 rgba(45, 164, 74, 0);
+  }
+  35% {
+    filter: saturate(1.45);
+    box-shadow: 0 0 18px rgba(45, 164, 74, 0.45);
+  }
+  100% {
+    filter: saturate(1);
+    box-shadow: 0 0 0 rgba(45, 164, 74, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .completion-celebration,
+  .completion-celebration-mark,
+  .completion-progress-pulse,
+  .completion-page,
+  .completion-summary-panel,
+  .chat-popout-enter {
+    animation-duration: 1ms;
+  }
+
+  .completion-celebration-burst {
+    display: none;
   }
 }
 

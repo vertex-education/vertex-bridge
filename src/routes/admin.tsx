@@ -3,6 +3,7 @@ import { createServerFn } from '@tanstack/react-start'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Copy } from 'lucide-react'
 import { listInvites, listInviteSchools, revokeInvite, sendInvite } from '#/lib/invitations'
 import { BrandedAlert } from '#/components/BrandedAlert'
 import { getServerRequest } from '#/lib/security'
@@ -62,6 +63,7 @@ function AdminPage() {
     title: string
     message: string
   } | null>(null)
+  const [copyToast, setCopyToast] = useState('')
 
   const { data: invites = [], isLoading: invitesLoading } = useQuery({
     queryKey: ['admin-invites'],
@@ -211,8 +213,27 @@ function AdminPage() {
     })
   }
 
+  const copyValue = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopyToast(`${label} copied`)
+      window.setTimeout(() => setCopyToast(''), 2200)
+    } catch {
+      setAlertStatus({
+        type: 'error',
+        title: 'Copy failed',
+        message: 'Clipboard access is not available in this browser session.',
+      })
+    }
+  }
+
   return (
     <main className="page-wrap page-shell">
+      {copyToast && (
+        <div className="fixed right-4 top-4 z-[70] rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-bold text-[var(--sea-ink)] shadow-xl">
+          {copyToast}
+        </div>
+      )}
       <div className="page-stack page-stack-wide">
         <div className="page-heading">
           <div className="page-kicker">
@@ -350,9 +371,21 @@ function AdminPage() {
               title={result.emailSent ? 'Invite sent' : 'Invite created'}
               className="mt-5"
             >
-              {!result.emailSent && result.emailError
-                ? `Email delivery was skipped: ${result.emailError}`
-                : 'The invite has been added to the sent invite list.'}
+              <div className="space-y-3">
+                <p>
+                  {!result.emailSent && result.emailError
+                    ? `Email delivery was skipped: ${result.emailError}`
+                    : 'The invite has been added to the sent invite list.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => copyValue(result.inviteLink, 'Invite link')}
+                  className="inline-flex items-center gap-2 rounded-lg border border-[var(--chip-line)] bg-white px-3 py-2 text-xs font-bold text-[var(--sea-ink)] transition hover:bg-[var(--foam)]"
+                >
+                  <Copy size={14} aria-hidden="true" />
+                  Copy invite link
+                </button>
+              </div>
             </BrandedAlert>
           )}
 

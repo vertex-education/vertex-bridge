@@ -9,6 +9,7 @@ import { TanStackDevtools } from '@tanstack/react-devtools'
 import Footer from '../components/Footer'
 import Header from '../components/Header'
 import MobileBottomNav from '../components/MobileBottomNav'
+import StaffMessenger from '../components/StaffMessenger'
 
 import TanStackQueryDevtools from '../integrations/tanstack-query/devtools'
 
@@ -62,6 +63,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         {children}
         <Footer />
         <MobileBottomNav />
+        <StaffMessenger />
         <TanStackDevtools
           config={{
             position: 'bottom-right',

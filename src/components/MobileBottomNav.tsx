@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import { Bot, ClipboardList, FileText, LayoutDashboard, ScrollText, Settings, UserCog, UserPlus, UsersRound } from 'lucide-react'
 import { authClient } from '#/lib/auth-client'
 
@@ -15,8 +16,31 @@ function openVertexAI() {
 
 export default function MobileBottomNav() {
   const { data: session } = authClient.useSession()
+  const [staffUnreadCount, setStaffUnreadCount] = useState(0)
   const role = session?.user ? (session.user as any).role : null
   const isSchoolRole = role === 'school_leader' || role === 'school_staff' || role === 'school_user'
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const readStoredCount = () => {
+      const stored = Number(window.localStorage.getItem('vertex-bridge:staff-unread-count') || '0')
+      setStaffUnreadCount(Number.isFinite(stored) ? Math.max(stored, 0) : 0)
+    }
+
+    const handleUnreadCount = (event: Event) => {
+      const detail = (event as CustomEvent<{ count?: number }>).detail
+      if (typeof detail?.count === 'number') {
+        setStaffUnreadCount(Math.max(detail.count, 0))
+      } else {
+        readStoredCount()
+      }
+    }
+
+    readStoredCount()
+    window.addEventListener('vertex-bridge:staff-unread-count', handleUnreadCount)
+    return () => window.removeEventListener('vertex-bridge:staff-unread-count', handleUnreadCount)
+  }, [])
 
   if (!role) return null
 
@@ -79,8 +103,16 @@ export default function MobileBottomNav() {
               className={mobileNavLinkClass}
               activeProps={{ className: mobileNavLinkClass }}
             >
-              <Bot size={18} aria-hidden="true" />
-              <span>VertexAI</span>
+              <span className="relative inline-flex">
+                <Bot size={18} aria-hidden="true" />
+                {staffUnreadCount > 0 && (
+                  <span className="absolute -right-2.5 -top-2.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-black leading-none text-white shadow-lg ring-2 ring-white">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--vertex-gold)] opacity-55" aria-hidden="true" />
+                    <span className="relative">{staffUnreadCount}</span>
+                  </span>
+                )}
+              </span>
+              <span>Get Help</span>
             </Link>
           </>
         )}

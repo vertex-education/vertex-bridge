@@ -27,6 +27,20 @@
     "binding": "AI",
     "remote": true
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SCHOOL_CONVERSATION_ROOM",
+        "class_name": "SchoolConversationRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1_school_conversation_room",
+      "new_sqlite_classes": ["SchoolConversationRoom"]
+    }
+  ],
   "send_email": [
     {
       "name": "EMAIL",

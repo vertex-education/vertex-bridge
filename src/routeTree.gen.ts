@@ -24,7 +24,12 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiViewDocumentRouteImport } from './routes/api/view-document'
+import { Route as ApiConversationsRouteImport } from './routes/api/conversations'
 import { Route as ApiAiHelperRouteImport } from './routes/api/ai-helper'
+import { Route as ApiConversationsWsRouteImport } from './routes/api/conversations/ws'
+import { Route as ApiConversationsSchoolsRouteImport } from './routes/api/conversations/schools'
+import { Route as ApiConversationsReadRouteImport } from './routes/api/conversations/read'
+import { Route as ApiConversationsMessagesRouteImport } from './routes/api/conversations/messages'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiAsanaOauthStartRouteImport } from './routes/api/asana/oauth/start'
 import { Route as ApiAsanaOauthDisconnectRouteImport } from './routes/api/asana/oauth/disconnect'
@@ -105,11 +110,37 @@ const ApiViewDocumentRoute = ApiViewDocumentRouteImport.update({
   path: '/api/view-document',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiConversationsRoute = ApiConversationsRouteImport.update({
+  id: '/api/conversations',
+  path: '/api/conversations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAiHelperRoute = ApiAiHelperRouteImport.update({
   id: '/api/ai-helper',
   path: '/api/ai-helper',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiConversationsWsRoute = ApiConversationsWsRouteImport.update({
+  id: '/ws',
+  path: '/ws',
+  getParentRoute: () => ApiConversationsRoute,
+} as any)
+const ApiConversationsSchoolsRoute = ApiConversationsSchoolsRouteImport.update({
+  id: '/schools',
+  path: '/schools',
+  getParentRoute: () => ApiConversationsRoute,
+} as any)
+const ApiConversationsReadRoute = ApiConversationsReadRouteImport.update({
+  id: '/read',
+  path: '/read',
+  getParentRoute: () => ApiConversationsRoute,
+} as any)
+const ApiConversationsMessagesRoute =
+  ApiConversationsMessagesRouteImport.update({
+    id: '/messages',
+    path: '/messages',
+    getParentRoute: () => ApiConversationsRoute,
+  } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -147,8 +178,13 @@ export interface FileRoutesByFullPath {
   '/user-settings': typeof UserSettingsRoute
   '/vertex-dashboard': typeof VertexDashboardRoute
   '/api/ai-helper': typeof ApiAiHelperRoute
+  '/api/conversations': typeof ApiConversationsRouteWithChildren
   '/api/view-document': typeof ApiViewDocumentRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/conversations/messages': typeof ApiConversationsMessagesRoute
+  '/api/conversations/read': typeof ApiConversationsReadRoute
+  '/api/conversations/schools': typeof ApiConversationsSchoolsRoute
+  '/api/conversations/ws': typeof ApiConversationsWsRoute
   '/api/asana/oauth/callback': typeof ApiAsanaOauthCallbackRoute
   '/api/asana/oauth/disconnect': typeof ApiAsanaOauthDisconnectRoute
   '/api/asana/oauth/start': typeof ApiAsanaOauthStartRoute
@@ -169,8 +205,13 @@ export interface FileRoutesByTo {
   '/user-settings': typeof UserSettingsRoute
   '/vertex-dashboard': typeof VertexDashboardRoute
   '/api/ai-helper': typeof ApiAiHelperRoute
+  '/api/conversations': typeof ApiConversationsRouteWithChildren
   '/api/view-document': typeof ApiViewDocumentRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/conversations/messages': typeof ApiConversationsMessagesRoute
+  '/api/conversations/read': typeof ApiConversationsReadRoute
+  '/api/conversations/schools': typeof ApiConversationsSchoolsRoute
+  '/api/conversations/ws': typeof ApiConversationsWsRoute
   '/api/asana/oauth/callback': typeof ApiAsanaOauthCallbackRoute
   '/api/asana/oauth/disconnect': typeof ApiAsanaOauthDisconnectRoute
   '/api/asana/oauth/start': typeof ApiAsanaOauthStartRoute
@@ -192,8 +233,13 @@ export interface FileRoutesById {
   '/user-settings': typeof UserSettingsRoute
   '/vertex-dashboard': typeof VertexDashboardRoute
   '/api/ai-helper': typeof ApiAiHelperRoute
+  '/api/conversations': typeof ApiConversationsRouteWithChildren
   '/api/view-document': typeof ApiViewDocumentRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/conversations/messages': typeof ApiConversationsMessagesRoute
+  '/api/conversations/read': typeof ApiConversationsReadRoute
+  '/api/conversations/schools': typeof ApiConversationsSchoolsRoute
+  '/api/conversations/ws': typeof ApiConversationsWsRoute
   '/api/asana/oauth/callback': typeof ApiAsanaOauthCallbackRoute
   '/api/asana/oauth/disconnect': typeof ApiAsanaOauthDisconnectRoute
   '/api/asana/oauth/start': typeof ApiAsanaOauthStartRoute
@@ -216,8 +262,13 @@ export interface FileRouteTypes {
     | '/user-settings'
     | '/vertex-dashboard'
     | '/api/ai-helper'
+    | '/api/conversations'
     | '/api/view-document'
     | '/api/auth/$'
+    | '/api/conversations/messages'
+    | '/api/conversations/read'
+    | '/api/conversations/schools'
+    | '/api/conversations/ws'
     | '/api/asana/oauth/callback'
     | '/api/asana/oauth/disconnect'
     | '/api/asana/oauth/start'
@@ -238,8 +289,13 @@ export interface FileRouteTypes {
     | '/user-settings'
     | '/vertex-dashboard'
     | '/api/ai-helper'
+    | '/api/conversations'
     | '/api/view-document'
     | '/api/auth/$'
+    | '/api/conversations/messages'
+    | '/api/conversations/read'
+    | '/api/conversations/schools'
+    | '/api/conversations/ws'
     | '/api/asana/oauth/callback'
     | '/api/asana/oauth/disconnect'
     | '/api/asana/oauth/start'
@@ -260,8 +316,13 @@ export interface FileRouteTypes {
     | '/user-settings'
     | '/vertex-dashboard'
     | '/api/ai-helper'
+    | '/api/conversations'
     | '/api/view-document'
     | '/api/auth/$'
+    | '/api/conversations/messages'
+    | '/api/conversations/read'
+    | '/api/conversations/schools'
+    | '/api/conversations/ws'
     | '/api/asana/oauth/callback'
     | '/api/asana/oauth/disconnect'
     | '/api/asana/oauth/start'
@@ -283,6 +344,7 @@ export interface RootRouteChildren {
   UserSettingsRoute: typeof UserSettingsRoute
   VertexDashboardRoute: typeof VertexDashboardRoute
   ApiAiHelperRoute: typeof ApiAiHelperRoute
+  ApiConversationsRoute: typeof ApiConversationsRouteWithChildren
   ApiViewDocumentRoute: typeof ApiViewDocumentRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiAsanaOauthCallbackRoute: typeof ApiAsanaOauthCallbackRoute
@@ -397,12 +459,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiViewDocumentRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/conversations': {
+      id: '/api/conversations'
+      path: '/api/conversations'
+      fullPath: '/api/conversations'
+      preLoaderRoute: typeof ApiConversationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/ai-helper': {
       id: '/api/ai-helper'
       path: '/api/ai-helper'
       fullPath: '/api/ai-helper'
       preLoaderRoute: typeof ApiAiHelperRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/conversations/ws': {
+      id: '/api/conversations/ws'
+      path: '/ws'
+      fullPath: '/api/conversations/ws'
+      preLoaderRoute: typeof ApiConversationsWsRouteImport
+      parentRoute: typeof ApiConversationsRoute
+    }
+    '/api/conversations/schools': {
+      id: '/api/conversations/schools'
+      path: '/schools'
+      fullPath: '/api/conversations/schools'
+      preLoaderRoute: typeof ApiConversationsSchoolsRouteImport
+      parentRoute: typeof ApiConversationsRoute
+    }
+    '/api/conversations/read': {
+      id: '/api/conversations/read'
+      path: '/read'
+      fullPath: '/api/conversations/read'
+      preLoaderRoute: typeof ApiConversationsReadRouteImport
+      parentRoute: typeof ApiConversationsRoute
+    }
+    '/api/conversations/messages': {
+      id: '/api/conversations/messages'
+      path: '/messages'
+      fullPath: '/api/conversations/messages'
+      preLoaderRoute: typeof ApiConversationsMessagesRouteImport
+      parentRoute: typeof ApiConversationsRoute
     }
     '/api/auth/$': {
       id: '/api/auth/$'
@@ -435,6 +532,23 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface ApiConversationsRouteChildren {
+  ApiConversationsMessagesRoute: typeof ApiConversationsMessagesRoute
+  ApiConversationsReadRoute: typeof ApiConversationsReadRoute
+  ApiConversationsSchoolsRoute: typeof ApiConversationsSchoolsRoute
+  ApiConversationsWsRoute: typeof ApiConversationsWsRoute
+}
+
+const ApiConversationsRouteChildren: ApiConversationsRouteChildren = {
+  ApiConversationsMessagesRoute: ApiConversationsMessagesRoute,
+  ApiConversationsReadRoute: ApiConversationsReadRoute,
+  ApiConversationsSchoolsRoute: ApiConversationsSchoolsRoute,
+  ApiConversationsWsRoute: ApiConversationsWsRoute,
+}
+
+const ApiConversationsRouteWithChildren =
+  ApiConversationsRoute._addFileChildren(ApiConversationsRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
@@ -451,6 +565,7 @@ const rootRouteChildren: RootRouteChildren = {
   UserSettingsRoute: UserSettingsRoute,
   VertexDashboardRoute: VertexDashboardRoute,
   ApiAiHelperRoute: ApiAiHelperRoute,
+  ApiConversationsRoute: ApiConversationsRouteWithChildren,
   ApiViewDocumentRoute: ApiViewDocumentRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiAsanaOauthCallbackRoute: ApiAsanaOauthCallbackRoute,

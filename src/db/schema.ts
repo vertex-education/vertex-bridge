@@ -197,6 +197,76 @@ export const schoolOnboardingTaskAssignments = sqliteTable('school_onboarding_ta
   }
 })
 
+export const schoolOnboardingIntakeResponses = sqliteTable('school_onboarding_intake_responses', {
+  schoolName: text('school_name').primaryKey(),
+  responseJson: text('response_json').notNull(),
+  completedStepIdsJson: text('completed_step_ids_json').notNull(),
+  submittedByUserId: text('submitted_by_user_id').references(() => user.id, { onDelete: 'set null' }),
+  submittedByEmail: text('submitted_by_email'),
+  submittedAt: integer('submitted_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => {
+  return {
+    updatedAtIdx: index('school_onboarding_intake_responses_updated_at_idx').on(table.updatedAt),
+  }
+})
+
+export const schoolConversations = sqliteTable('school_conversations', {
+  id: text('id').primaryKey(),
+  schoolName: text('school_name').notNull(),
+  channel: text('channel').notNull(), // 'ai' | 'staff'
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => {
+  return {
+    schoolChannelUnique: uniqueIndex('school_conversations_school_channel_unique').on(table.schoolName, table.channel),
+    schoolNameIdx: index('school_conversations_school_name_idx').on(table.schoolName),
+  }
+})
+
+export const schoolConversationMessages = sqliteTable('school_conversation_messages', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id')
+    .notNull()
+    .references(() => schoolConversations.id, { onDelete: 'cascade' }),
+  schoolName: text('school_name').notNull(),
+  channel: text('channel').notNull(), // 'ai' | 'staff'
+  senderType: text('sender_type').notNull(), // 'client' | 'staff' | 'ai' | 'system'
+  senderUserId: text('sender_user_id').references(() => user.id, { onDelete: 'set null' }),
+  senderEmail: text('sender_email'),
+  senderName: text('sender_name'),
+  body: text('body').notNull(),
+  aiModel: text('ai_model'),
+  aiDiagnostic: text('ai_diagnostic'),
+  metadata: text('metadata'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => {
+  return {
+    conversationCreatedAtIdx: index('school_conversation_messages_conversation_created_at_idx').on(table.conversationId, table.createdAt),
+    schoolChannelCreatedAtIdx: index('school_conversation_messages_school_channel_created_at_idx').on(table.schoolName, table.channel, table.createdAt),
+  }
+})
+
+export const schoolConversationReads = sqliteTable('school_conversation_reads', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id')
+    .notNull()
+    .references(() => schoolConversations.id, { onDelete: 'cascade' }),
+  userId: text('user_id')
+    .notNull()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  lastReadMessageId: text('last_read_message_id'),
+  lastReadAt: integer('last_read_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => {
+  return {
+    conversationUserUnique: uniqueIndex('school_conversation_reads_conversation_user_unique').on(table.conversationId, table.userId),
+    userIdx: index('school_conversation_reads_user_idx').on(table.userId),
+  }
+})
+
 export const schoolNudgeSettings = sqliteTable('school_nudge_settings', {
   schoolName: text('school_name').primaryKey(),
   scheduledNudgesEnabled: integer('scheduled_nudges_enabled', { mode: 'boolean' }).notNull().default(true),

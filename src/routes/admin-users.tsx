@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { desc, eq, like, or } from 'drizzle-orm'
+import { asc, desc, eq, like, or } from 'drizzle-orm'
 import type { FormEvent } from 'react'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -22,6 +22,24 @@ type EditUserDraft = {
   name: string
   email: string
   role: UserRole
+  savedRole: UserRole
+}
+type AdminUserSchoolAssignment = {
+  id: string
+  schoolName: string
+  contactRole: 'school_leader' | 'school_staff'
+  acceptedAt: Date | string | null
+}
+type AdminSchoolOption = {
+  schoolName: string
+  state: string
+  services: string
+  primaryContactName: string
+  primaryContactEmail: string
+}
+type AddSchoolDraft = {
+  schoolName: string
+  contactRole: 'school_leader' | 'school_staff'
 }
 
 const roleOptions: Array<{ value: UserRole; label: string; description: string }> = [
@@ -96,6 +114,93 @@ const listUsersForAdmin = createServerFn({ method: 'GET' })
     return baseQuery
       .orderBy(desc(user.updatedAt))
       .limit(100)
+      .all()
+  })
+
+const listSchoolsForAdminUser = createServerFn({ method: 'GET' })
+  .validator((userId: string) => userId)
+  .handler(async ({ data: userId }) => {
+    const { db } = await import('#/db')
+    const { clientProfiles, schoolContacts, user } = await import('#/db/schema')
+
+    await requireAdminSession()
+
+    const [targetUser] = await db
+      .select()
+      .from(user)
+      .where(eq(user.id, userId))
+      .all()
+
+    if (!targetUser) {
+      throw new Error('User not found.')
+    }
+
+    const [contacts, primaryProfiles] = await Promise.all([
+      db
+        .select({
+          id: schoolContacts.id,
+          schoolName: schoolContacts.schoolName,
+          contactRole: schoolContacts.contactRole,
+          acceptedAt: schoolContacts.acceptedAt,
+        })
+        .from(schoolContacts)
+        .where(or(
+          eq(schoolContacts.email, targetUser.email),
+          eq(schoolContacts.userId, targetUser.id),
+        ))
+        .orderBy(asc(schoolContacts.schoolName))
+        .all(),
+      db
+        .select({
+          schoolName: clientProfiles.schoolName,
+          primaryContactEmail: clientProfiles.primaryContactEmail,
+        })
+        .from(clientProfiles)
+        .where(eq(clientProfiles.primaryContactEmail, targetUser.email))
+        .orderBy(asc(clientProfiles.schoolName))
+        .all(),
+    ])
+
+    const assignments = new Map<string, AdminUserSchoolAssignment>()
+
+    for (const profile of primaryProfiles) {
+      assignments.set(profile.schoolName, {
+        id: `primary:${profile.schoolName}`,
+        schoolName: profile.schoolName,
+        contactRole: 'school_leader',
+        acceptedAt: null,
+      })
+    }
+
+    for (const contact of contacts) {
+      assignments.set(contact.schoolName, {
+        id: contact.id,
+        schoolName: contact.schoolName,
+        contactRole: contact.contactRole === 'school_leader' ? 'school_leader' : 'school_staff',
+        acceptedAt: contact.acceptedAt,
+      })
+    }
+
+    return Array.from(assignments.values()).sort((a, b) => a.schoolName.localeCompare(b.schoolName))
+  })
+
+const listSchoolsForAdminAssignment = createServerFn({ method: 'GET' })
+  .handler(async () => {
+    const { db } = await import('#/db')
+    const { clientProfiles } = await import('#/db/schema')
+
+    await requireAdminSession()
+
+    return db
+      .select({
+        schoolName: clientProfiles.schoolName,
+        state: clientProfiles.state,
+        services: clientProfiles.services,
+        primaryContactName: clientProfiles.primaryContactName,
+        primaryContactEmail: clientProfiles.primaryContactEmail,
+      })
+      .from(clientProfiles)
+      .orderBy(asc(clientProfiles.schoolName))
       .all()
   })
 
@@ -228,6 +333,109 @@ const updateUserAccount = createServerFn({ method: 'POST' })
     }
   })
 
+const addSchoolToUser = createServerFn({ method: 'POST' })
+  .validator((data: { userId: string; schoolName: string; contactRole: 'school_leader' | 'school_staff' }) => data)
+  .handler(async ({ data }) => {
+    const { db } = await import('#/db')
+    const { clientProfiles, schoolContacts, user } = await import('#/db/schema')
+
+    await assertTrustedOrigin()
+    const adminSession = await requireAdminSession()
+
+    const schoolName = data.schoolName.trim()
+    if (!schoolName) {
+      throw new Error('Select a school to add.')
+    }
+    if (data.contactRole !== 'school_leader' && data.contactRole !== 'school_staff') {
+      throw new Error('Select School Leader or School Staff access.')
+    }
+
+    const [targetUser, selectedSchool] = await Promise.all([
+      db
+        .select()
+        .from(user)
+        .where(eq(user.id, data.userId))
+        .all()
+        .then((rows) => rows[0]),
+      db
+        .select()
+        .from(clientProfiles)
+        .where(eq(clientProfiles.schoolName, schoolName))
+        .all()
+        .then((rows) => rows[0]),
+    ])
+
+    if (!targetUser) {
+      throw new Error('User not found.')
+    }
+    if (!selectedSchool) {
+      throw new Error('Selected school was not found.')
+    }
+    if (targetUser.role !== 'school_leader' && targetUser.role !== 'school_staff' && targetUser.role !== 'school_user') {
+      throw new Error('Schools can only be added to School Leader or School Staff users.')
+    }
+
+    const cleanEmail = targetUser.email.trim().toLowerCase()
+    const now = new Date()
+
+    await db
+      .insert(schoolContacts)
+      .values({
+        id: crypto.randomUUID(),
+        schoolName: selectedSchool.schoolName,
+        userId: targetUser.id,
+        email: cleanEmail,
+        name: targetUser.name,
+        contactRole: data.contactRole,
+        invitedByUserId: adminSession.user.id,
+        invitedByEmail: adminSession.user.email,
+        acceptedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [schoolContacts.schoolName, schoolContacts.email],
+        set: {
+          userId: targetUser.id,
+          name: targetUser.name,
+          contactRole: data.contactRole,
+          invitedByUserId: adminSession.user.id,
+          invitedByEmail: adminSession.user.email,
+          acceptedAt: now,
+          updatedAt: now,
+        },
+      })
+      .run()
+
+    const { recordAuditEvent } = await import('#/lib/audit')
+    await recordAuditEvent({
+      session: adminSession,
+      request: await getServerRequest(),
+      surface: 'admin',
+      category: 'admin',
+      action: 'user_school_added',
+      message: `${adminSession.user.email} added ${selectedSchool.schoolName} to ${targetUser.email}.`,
+      entityType: 'user',
+      entityId: targetUser.id,
+      schoolName: selectedSchool.schoolName,
+      clientEmail: cleanEmail,
+      metadata: {
+        userId: targetUser.id,
+        email: cleanEmail,
+        role: targetUser.role,
+        contactRole: data.contactRole,
+        schoolName: selectedSchool.schoolName,
+      },
+    })
+
+    return {
+      userId: targetUser.id,
+      email: cleanEmail,
+      schoolName: selectedSchool.schoolName,
+      contactRole: data.contactRole,
+    }
+  })
+
 export const Route = createFileRoute('/admin-users')({
   beforeLoad: async ({ location }) => {
     const access = await getAdminUsersAccess()
@@ -262,6 +470,14 @@ function normalizeUserRole(value: string): UserRole {
   return 'school_leader'
 }
 
+function isSchoolRole(value: string) {
+  return value === 'school_leader' || value === 'school_staff' || value === 'school_user'
+}
+
+function schoolContactRoleLabel(value: string) {
+  return value === 'school_staff' ? 'School Staff' : 'School Leader'
+}
+
 function formatDate(value: Date | string) {
   return new Date(value).toLocaleDateString([], {
     month: 'short',
@@ -275,6 +491,10 @@ function AdminUsersPage() {
   const [query, setQuery] = useState('')
   const [appliedQuery, setAppliedQuery] = useState('')
   const [editDraft, setEditDraft] = useState<EditUserDraft | null>(null)
+  const [addSchoolDraft, setAddSchoolDraft] = useState<AddSchoolDraft>({
+    schoolName: '',
+    contactRole: 'school_staff',
+  })
   const [message, setMessage] = useState<{
     type: 'success' | 'error' | 'warning'
     title: string
@@ -284,6 +504,18 @@ function AdminUsersPage() {
   const { data: users = [], isLoading, isError } = useQuery({
     queryKey: ['admin-users', appliedQuery],
     queryFn: () => listUsersForAdmin({ data: { query: appliedQuery } }),
+  })
+
+  const { data: schoolAssignments = [], isLoading: schoolAssignmentsLoading } = useQuery({
+    queryKey: ['admin-user-schools', editDraft?.id],
+    queryFn: () => listSchoolsForAdminUser({ data: editDraft!.id }),
+    enabled: Boolean(editDraft?.id),
+  })
+
+  const { data: assignableSchools = [], isLoading: assignableSchoolsLoading } = useQuery({
+    queryKey: ['admin-assignment-schools'],
+    queryFn: () => listSchoolsForAdminAssignment(),
+    enabled: Boolean(editDraft),
   })
 
   const updateAccountMutation = useMutation({
@@ -315,7 +547,38 @@ function AdminUsersPage() {
     },
   })
 
+  const addSchoolMutation = useMutation({
+    mutationFn: (input: { userId: string; schoolName: string; contactRole: 'school_leader' | 'school_staff' }) => addSchoolToUser({ data: input }),
+    onSuccess: (result) => {
+      setMessage({
+        type: 'success',
+        title: 'School added',
+        message: `${result.schoolName} was added to ${result.email} as ${schoolContactRoleLabel(result.contactRole)}.`,
+      })
+      setAddSchoolDraft({
+        schoolName: '',
+        contactRole: 'school_staff',
+      })
+      queryClient.invalidateQueries({ queryKey: ['admin-user-schools', result.userId] })
+    },
+    onError: (err: any) => {
+      setMessage({
+        type: 'error',
+        title: 'School assignment failed',
+        message: err?.message || 'Could not add this school to the user.',
+      })
+    },
+  })
+
   const userRows = useMemo(() => users, [users])
+  const assignedSchoolNames = useMemo(
+    () => new Set(schoolAssignments.map((assignment) => assignment.schoolName)),
+    [schoolAssignments],
+  )
+  const availableSchools = useMemo(
+    () => assignableSchools.filter((school) => !assignedSchoolNames.has(school.schoolName)),
+    [assignableSchools, assignedSchoolNames],
+  )
 
   const handleSearch = (event: FormEvent) => {
     event.preventDefault()
@@ -324,11 +587,16 @@ function AdminUsersPage() {
 
   const openEditModal = (row: AdminUserRow) => {
     setMessage(null)
+    setAddSchoolDraft({
+      schoolName: '',
+      contactRole: 'school_staff',
+    })
     setEditDraft({
       id: row.id,
       name: row.name,
       email: row.email,
       role: normalizeUserRole(row.role),
+      savedRole: normalizeUserRole(row.role),
     })
   }
 
@@ -346,6 +614,17 @@ function AdminUsersPage() {
       name: editDraft.name,
       email: editDraft.email,
       role: editDraft.role,
+    })
+  }
+
+  const handleAddSchool = (event: FormEvent) => {
+    event.preventDefault()
+    if (!editDraft) return
+    setMessage(null)
+    addSchoolMutation.mutate({
+      userId: editDraft.id,
+      schoolName: addSchoolDraft.schoolName,
+      contactRole: addSchoolDraft.contactRole,
     })
   }
 
@@ -492,10 +771,7 @@ function AdminUsersPage() {
           aria-modal="true"
           aria-labelledby="edit-user-title"
         >
-          <form
-            onSubmit={saveUser}
-            className="w-full max-w-lg rounded-2xl border border-[var(--chip-line)] bg-white p-5 shadow-2xl sm:p-6"
-          >
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[var(--chip-line)] bg-white p-5 shadow-2xl sm:p-6">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
                 <div className="page-kicker">
@@ -514,60 +790,143 @@ function AdminUsersPage() {
               </button>
             </div>
 
-            <div className="grid gap-4">
-              <label className="text-sm font-bold text-[var(--sea-ink)]">
-                Name
-                <input
-                  value={editDraft.name}
-                  onChange={(event) => setEditDraft(current => current ? { ...current, name: event.target.value } : current)}
-                  className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
-                />
-              </label>
-              <label className="text-sm font-bold text-[var(--sea-ink)]">
-                Email
-                <input
-                  type="email"
-                  value={editDraft.email}
-                  onChange={(event) => setEditDraft(current => current ? { ...current, email: event.target.value } : current)}
-                  className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
-                />
-              </label>
-              <label className="text-sm font-bold text-[var(--sea-ink)]">
-                Role
-                <select
-                  value={editDraft.role}
-                  onChange={(event) => setEditDraft(current => current ? { ...current, role: event.target.value as UserRole } : current)}
-                  className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
-                >
-                  {roleOptions.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="text-xs font-semibold leading-5 text-[var(--sea-ink-soft)]">
-                {roleOptions.find(option => option.value === editDraft.role)?.description}
-              </p>
-            </div>
+            <form onSubmit={saveUser}>
+              <div className="grid gap-4">
+                <label className="text-sm font-bold text-[var(--sea-ink)]">
+                  Name
+                  <input
+                    value={editDraft.name}
+                    onChange={(event) => setEditDraft(current => current ? { ...current, name: event.target.value } : current)}
+                    className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
+                  />
+                </label>
+                <label className="text-sm font-bold text-[var(--sea-ink)]">
+                  Email
+                  <input
+                    type="email"
+                    value={editDraft.email}
+                    onChange={(event) => setEditDraft(current => current ? { ...current, email: event.target.value } : current)}
+                    className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
+                  />
+                </label>
+                <label className="text-sm font-bold text-[var(--sea-ink)]">
+                  Role
+                  <select
+                    value={editDraft.role}
+                    onChange={(event) => setEditDraft(current => current ? { ...current, role: event.target.value as UserRole } : current)}
+                    className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
+                  >
+                    {roleOptions.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="text-xs font-semibold leading-5 text-[var(--sea-ink-soft)]">
+                  {roleOptions.find(option => option.value === editDraft.role)?.description}
+                </p>
+              </div>
 
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={closeEditModal}
-                className="rounded-full border border-[var(--chip-line)] bg-white px-5 py-3 text-sm font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)]"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={updateAccountMutation.isPending || !editDraft.name.trim() || !editDraft.email.trim()}
-                className="rounded-full bg-[var(--vertex-blue)] px-5 py-3 text-sm font-bold text-white transition hover:bg-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:bg-[var(--vertex-gray)]"
-              >
-                {updateAccountMutation.isPending ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </form>
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeEditModal}
+                  className="rounded-full border border-[var(--chip-line)] bg-white px-5 py-3 text-sm font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateAccountMutation.isPending || !editDraft.name.trim() || !editDraft.email.trim()}
+                  className="rounded-full bg-[var(--vertex-blue)] px-5 py-3 text-sm font-bold text-white transition hover:bg-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:bg-[var(--vertex-gray)]"
+                >
+                  {updateAccountMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+
+            {isSchoolRole(editDraft.savedRole) && (
+              <div className="mt-6 border-t border-[var(--chip-line)] pt-5">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h3 className="font-display text-lg font-bold text-[var(--vertex-blue)]">
+                      School Access
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-[var(--sea-ink-soft)]">
+                      Add an existing school to this school user account.
+                    </p>
+                  </div>
+                  <span className="text-xs font-black uppercase tracking-wide text-[var(--sea-ink-soft)]">
+                    {schoolAssignments.length} assigned
+                  </span>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-[var(--chip-line)]">
+                  {schoolAssignmentsLoading ? (
+                    <div className="p-4 text-sm font-semibold text-[var(--sea-ink-soft)]">
+                      Loading school access...
+                    </div>
+                  ) : schoolAssignments.length === 0 ? (
+                    <div className="p-4 text-sm font-semibold text-[var(--sea-ink-soft)]">
+                      No schools assigned yet.
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-[var(--chip-line)]">
+                      {schoolAssignments.map((assignment) => (
+                        <li key={assignment.id} className="flex flex-col gap-1 p-4 sm:flex-row sm:items-center sm:justify-between">
+                          <span className="font-bold text-[var(--sea-ink)]">
+                            {assignment.schoolName}
+                          </span>
+                          <span className="text-xs font-black uppercase tracking-wide text-[var(--vertex-blue)]">
+                            {schoolContactRoleLabel(assignment.contactRole)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <form onSubmit={handleAddSchool} className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_auto] md:items-end">
+                  <label className="text-sm font-bold text-[var(--sea-ink)]">
+                    School
+                    <select
+                      value={addSchoolDraft.schoolName}
+                      onChange={(event) => setAddSchoolDraft(current => ({ ...current, schoolName: event.target.value }))}
+                      className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
+                    >
+                      <option value="">
+                        {assignableSchoolsLoading ? 'Loading schools...' : 'Select a school'}
+                      </option>
+                      {availableSchools.map((school: AdminSchoolOption) => (
+                        <option key={school.schoolName} value={school.schoolName}>
+                          {school.schoolName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm font-bold text-[var(--sea-ink)]">
+                    Access
+                    <select
+                      value={addSchoolDraft.contactRole}
+                      onChange={(event) => setAddSchoolDraft(current => ({ ...current, contactRole: event.target.value as 'school_leader' | 'school_staff' }))}
+                      className="mt-2 w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm font-semibold text-[var(--sea-ink)] outline-none transition focus:border-[var(--vertex-blue)] focus:ring-4 focus:ring-[color-mix(in_oklab,var(--vertex-blue)_14%,transparent)]"
+                    >
+                      <option value="school_staff">School Staff</option>
+                      <option value="school_leader">School Leader</option>
+                    </select>
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={addSchoolMutation.isPending || !addSchoolDraft.schoolName}
+                    className="rounded-full bg-[var(--vertex-blue)] px-5 py-3 text-sm font-bold text-white transition hover:bg-[var(--lagoon-deep)] disabled:cursor-not-allowed disabled:bg-[var(--vertex-gray)]"
+                  >
+                    {addSchoolMutation.isPending ? 'Adding...' : 'Add School'}
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </main>

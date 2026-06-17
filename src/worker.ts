@@ -1,6 +1,8 @@
 import serverEntry from '@tanstack/react-start/server-entry'
 import { sendScheduledTaskNudges } from './lib/scheduled-nudges'
 
+export { SchoolConversationRoom } from './lib/school-conversation-room'
+
 export default {
   fetch: serverEntry.fetch,
 

@@ -50,8 +50,58 @@ export const Route = createFileRoute('/api/ai-helper')({
           assertWithinRateLimit(`${session.user.id}:${getClientIp(request)}`)
 
           const data = await request.json() as AskAIHelperInput
+          const schoolName = data.schoolContext?.schoolName?.trim()
+          if (schoolName) {
+            const { assertCanAccessConversation, broadcastConversationEvent, createConversationMessage } = await import('#/lib/conversations')
+            await assertCanAccessConversation(session as any, schoolName)
+            const userMessage = await createConversationMessage({
+              schoolName,
+              channel: 'ai',
+              senderType: 'client',
+              senderUserId: session.user.id,
+              senderEmail: session.user.email,
+              senderName: session.user.name || session.user.email,
+              body: data.query || '',
+              metadata: {
+                currentTaskName: data.currentTask?.name || null,
+                pageStage: data.pageContext?.stage || null,
+              },
+            })
+            await broadcastConversationEvent({
+              type: 'conversation:new-message',
+              schoolName,
+              channel: 'ai',
+              message: userMessage,
+              at: userMessage.createdAt,
+            })
+          }
           const startedAt = Date.now()
           const response = await getAIHelperResponse(data)
+          if (schoolName) {
+            const { broadcastConversationEvent, createConversationMessage } = await import('#/lib/conversations')
+            const aiMessage = await createConversationMessage({
+              schoolName,
+              channel: 'ai',
+              senderType: 'ai',
+              senderUserId: null,
+              senderEmail: null,
+              senderName: 'VertexAI',
+              body: response.text,
+              aiModel: response.model,
+              aiDiagnostic: response.diagnostic,
+              metadata: {
+                isFallback: response.isFallback,
+                currentTaskName: data.currentTask?.name || null,
+              },
+            })
+            await broadcastConversationEvent({
+              type: 'conversation:new-message',
+              schoolName,
+              channel: 'ai',
+              message: aiMessage,
+              at: aiMessage.createdAt,
+            })
+          }
           const { inferAIQueryCategory, recordAuditEvent } = await import('#/lib/audit')
           const aiInferenceCategory = inferAIQueryCategory(data.query || '')
           await recordAuditEvent({

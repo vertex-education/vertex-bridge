@@ -28,6 +28,7 @@ type AuditLogFilters = {
   category?: string
   surface?: string
   actorRole?: string
+  schoolName?: string
   query?: string
   metric?: string
   page?: number
@@ -183,7 +184,7 @@ function getMetricWhereClause(auditLog: typeof import('#/db/schema').auditLog, m
     return eq(auditLog.action, 'file_opened')
   }
   if (metric === 'pending-review') {
-    return or(eq(auditLog.action, 'file_reviewed'), eq(auditLog.action, 'file_uploaded'))
+    return or(eq(auditLog.action, 'file_reviewed'), eq(auditLog.category, 'review'))
   }
   if (metric === 'admin-actions') {
     return or(eq(auditLog.surface, 'admin'), eq(auditLog.category, 'oauth'), eq(auditLog.category, 'admin'))
@@ -210,6 +211,7 @@ export const getAuditLogData = createServerFn({ method: 'GET' })
     if (filters.category) whereClauses.push(eq(auditLog.category, filters.category))
     if (filters.surface) whereClauses.push(eq(auditLog.surface, filters.surface))
     if (filters.actorRole) whereClauses.push(eq(auditLog.actorRole, filters.actorRole))
+    if (filters.schoolName) whereClauses.push(eq(auditLog.schoolName, filters.schoolName))
     if (filters.query?.trim()) {
       const needle = `%${filters.query.trim()}%`
       whereClauses.push(or(
@@ -260,6 +262,12 @@ export const getAuditLogData = createServerFn({ method: 'GET' })
       .limit(1000)
       .all()
     const metricRows = scope === 'vertex' ? recentRows.filter(isVertexVisible) : recentRows
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    const todayActionCount = metricRows.filter((row) => {
+      const occurredAt = row.occurredAt instanceof Date ? row.occurredAt : new Date(row.occurredAt)
+      return occurredAt >= todayStart
+    }).length
     const aiRows = metricRows.filter(row => row.category === 'ai')
     const searchRows = aiRows.filter(row => row.searchQuery)
     const categoryCounts = new Map<string, number>()
@@ -336,7 +344,9 @@ export const getAuditLogData = createServerFn({ method: 'GET' })
       role,
       metrics: {
         totalEvents: metricRows.length,
+        totalActionsToday: todayActionCount,
         aiUsage: aiRows.length,
+        documentsReviewed: metricRows.filter(row => row.action === 'file_reviewed' || row.category === 'review').length,
         fileOpens: metricRows.filter(row => row.action === 'file_opened').length,
         adminActions: metricRows.filter(row => row.surface === 'admin' || adminOnlyCategories.has(row.category)).length,
         uniqueSearches: exactQueryCounts.size,
@@ -354,6 +364,8 @@ export const getAuditLogData = createServerFn({ method: 'GET' })
       aiCategoryCounts: Array.from(categoryCounts.entries())
         .map(([category, count]) => ({ category, count }))
         .sort((a, b) => b.count - a.count),
+      schoolOptions: Array.from(new Set(metricRows.map(row => row.schoolName).filter((schoolName): schoolName is string => Boolean(schoolName))))
+        .sort((a, b) => a.localeCompare(b)),
       pagination: {
         page,
         pageSize,

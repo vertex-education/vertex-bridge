@@ -1,16 +1,38 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Activity, Bot, ChevronLeft, ChevronRight, Download, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { Activity, Bot, ChevronLeft, ChevronRight, Download, ShieldCheck, X } from 'lucide-react'
 import { getAuditLogData } from '#/lib/audit'
 import { getServerRequest } from '#/lib/security'
 import { AiDisclosure } from '#/components/AiDisclosure'
-import { BrandedAlert } from '#/components/BrandedAlert'
 
 const auditCategoryOptions = ['account', 'ai', 'asana', 'file', 'hubspot', 'invite', 'notification', 'oauth', 'profile', 'review', 'upload']
 const auditSurfaceOptions = ['admin', 'client', 'system', 'vertex']
+
+type AuditSearch = {
+  category: string
+  surface: string
+  actorRole: string
+  schoolName: string
+  query: string
+  metric: string
+  page: number
+  pageSize: number
+}
+
+function parseAuditSearch(search: Record<string, unknown>): AuditSearch {
+  return {
+    category: typeof search.category === 'string' ? search.category : '',
+    surface: typeof search.surface === 'string' ? search.surface : '',
+    actorRole: typeof search.actorRole === 'string' ? search.actorRole : '',
+    schoolName: typeof search.schoolName === 'string' ? search.schoolName : '',
+    query: typeof search.query === 'string' ? search.query : '',
+    metric: typeof search.metric === 'string' ? search.metric : '',
+    page: Math.max(Number(search.page) || 1, 1),
+    pageSize: [25, 50, 100].includes(Number(search.pageSize)) ? Number(search.pageSize) : 25,
+  }
+}
 
 const getAuditAccess = createServerFn({ method: 'GET' }).handler(async () => {
   const { auth } = await import('#/lib/auth')
@@ -29,6 +51,7 @@ const getAuditAccess = createServerFn({ method: 'GET' }).handler(async () => {
 })
 
 export const Route = createFileRoute('/admin-audit-log')({
+  validateSearch: parseAuditSearch,
   beforeLoad: async ({ location }) => {
     const access = await getAuditAccess()
 
@@ -47,6 +70,8 @@ export const Route = createFileRoute('/admin-audit-log')({
       })
     }
   },
+  loaderDeps: ({ search }) => search,
+  loader: ({ deps }) => getAuditLogData({ data: deps }),
   component: AuditLogPage,
 })
 
@@ -116,31 +141,32 @@ function MetricCard({
 }
 
 function AuditLogPage() {
-  const [category, setCategory] = useState('')
-  const [surface, setSurface] = useState('')
-  const [actorRole, setActorRole] = useState('')
-  const [query, setQuery] = useState('')
-  const [metric, setMetric] = useState('')
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
+  const router = useRouter()
+  const navigate = useNavigate({ from: '/admin-audit-log' })
+  const search = Route.useSearch()
+  const data = Route.useLoaderData()
   const [selectedSearchCategory, setSelectedSearchCategory] = useState('')
   const [selectedAuditEvent, setSelectedAuditEvent] = useState<any | null>(null)
 
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['audit-log', category, surface, actorRole, query, metric, page, pageSize],
-    queryFn: () => getAuditLogData({ data: { category, surface, actorRole, query, metric, page, pageSize } }),
-    placeholderData: previousData => previousData,
-    refetchInterval: 15_000,
-  })
+  const setAuditSearch = (updates: Partial<AuditSearch>) => {
+    navigate({
+      search: {
+        ...search,
+        ...updates,
+      },
+    })
+  }
 
-  const rows = data?.rows || []
-  const isAdmin = data?.role === 'admin'
-  const pagination = data?.pagination
+  const setFilter = (updates: Partial<AuditSearch>) => setAuditSearch({ ...updates, page: 1 })
+
+  const rows = data.rows || []
+  const isAdmin = data.role === 'admin'
+  const pagination = data.pagination
   const totalRows = pagination?.totalRows ?? 0
   const totalPages = pagination?.totalPages ?? 1
-  const firstRow = totalRows === 0 ? 0 : ((pagination?.page ?? page) - 1) * (pagination?.pageSize ?? pageSize) + 1
+  const firstRow = totalRows === 0 ? 0 : ((pagination?.page ?? search.page) - 1) * (pagination?.pageSize ?? search.pageSize) + 1
   const lastRow = totalRows === 0 ? 0 : Math.min(firstRow + rows.length - 1, totalRows)
-  const selectedTopSearch = (data?.topSearches || []).find(item => item.category === selectedSearchCategory) || null
+  const selectedTopSearch = (data.topSearches || []).find(item => item.category === selectedSearchCategory) || null
   const categoryOptions = useMemo(
     () => auditCategoryOptions.filter(option => isAdmin || (option !== 'oauth' && option !== 'admin')),
     [isAdmin],
@@ -150,8 +176,7 @@ function AuditLogPage() {
     [isAdmin],
   )
   const changeMetric = (nextMetric: string) => {
-    setMetric(nextMetric)
-    setPage(1)
+    setFilter({ metric: nextMetric })
   }
 
   return (
@@ -165,62 +190,49 @@ function AuditLogPage() {
           </p>
         </div>
 
-        {isError && (
-          <BrandedAlert variant="error" title="Audit log unavailable">
-            The audit log could not be loaded. Confirm the audit migration has been applied.
-          </BrandedAlert>
-        )}
-
         <section className={`grid gap-3 md:grid-cols-2 ${isAdmin ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
           <MetricCard
-            label="Events"
-            value={data?.metrics.totalEvents ?? 0}
-            detail="Recent logged actions"
-            active={!metric}
+            label="Actions Today"
+            value={data.metrics.totalActionsToday ?? 0}
+            detail="Audit entries logged since midnight"
+            active={!search.metric}
             onClick={() => changeMetric('')}
             icon={<Activity size={20} />}
           />
           <MetricCard
-            label="VertexAI"
-            value={data?.metrics.aiUsage ?? 0}
-            detail={`Avg ${data?.metrics.avgAILatencyMs ?? 0}ms`}
-            active={metric === 'ai-usage'}
-            onClick={() => changeMetric(metric === 'ai-usage' ? '' : 'ai-usage')}
+            label="AI Inferences"
+            value={data.metrics.aiUsage ?? 0}
+            detail={`Avg ${data.metrics.avgAILatencyMs ?? 0}ms`}
+            active={search.metric === 'ai-usage'}
+            onClick={() => changeMetric(search.metric === 'ai-usage' ? '' : 'ai-usage')}
             icon={<Bot size={20} />}
             aiAssisted
           />
           <MetricCard
-            label="Searches"
-            value={data?.metrics.uniqueSearches ?? 0}
-            detail="Unique exact prompts"
-            active={category === 'ai'}
+            label="Documents Reviewed"
+            value={data.metrics.documentsReviewed ?? 0}
+            detail="Reviewed document events"
+            active={search.metric === 'pending-review'}
             onClick={() => {
-              if (category === 'ai') {
-                setCategory('')
-                setQuery('')
-              } else {
-                setCategory('ai')
-              }
-              setPage(1)
+              changeMetric(search.metric === 'pending-review' ? '' : 'pending-review')
             }}
-            icon={<Sparkles size={20} />}
-            aiAssisted
+            icon={<ShieldCheck size={20} />}
           />
           <MetricCard
             label="File Opens"
-            value={data?.metrics.fileOpens ?? 0}
+            value={data.metrics.fileOpens ?? 0}
             detail="Document access events"
-            active={metric === 'file-opens'}
-            onClick={() => changeMetric(metric === 'file-opens' ? '' : 'file-opens')}
+            active={search.metric === 'file-opens'}
+            onClick={() => changeMetric(search.metric === 'file-opens' ? '' : 'file-opens')}
             icon={<Download size={20} />}
           />
           {isAdmin && (
             <MetricCard
               label="Admin"
-              value={data?.metrics.adminActions ?? 0}
+              value={data.metrics.adminActions ?? 0}
               detail="Admin-only actions"
-              active={metric === 'admin-actions'}
-              onClick={() => changeMetric(metric === 'admin-actions' ? '' : 'admin-actions')}
+              active={search.metric === 'admin-actions'}
+              onClick={() => changeMetric(search.metric === 'admin-actions' ? '' : 'admin-actions')}
               icon={<ShieldCheck size={20} />}
             />
           )}
@@ -230,12 +242,16 @@ function AuditLogPage() {
             detail="Rows after filters"
             active={false}
             onClick={() => {
-              setMetric('')
-              setCategory('')
-              setSurface('')
-              setActorRole('')
-              setQuery('')
-              setPage(1)
+              setAuditSearch({
+                category: '',
+                surface: '',
+                actorRole: '',
+                schoolName: '',
+                query: '',
+                metric: '',
+                page: 1,
+                pageSize: search.pageSize,
+              })
             }}
             icon={<Activity size={20} />}
           />
@@ -245,20 +261,18 @@ function AuditLogPage() {
           <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
             <div className="relative">
               <input
-                value={query}
+                value={search.query}
                 onChange={(event) => {
-                  setQuery(event.target.value)
-                  setPage(1)
+                  setFilter({ query: event.target.value })
                 }}
                 placeholder="Filter actor, school, action, or exact VertexAI search..."
                 className="min-h-10 w-full rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 pr-11 text-sm font-semibold text-[var(--sea-ink)] outline-none focus:ring-2 focus:ring-[var(--vertex-blue)]"
               />
-              {query && (
+              {search.query && (
                 <button
                   type="button"
                   onClick={() => {
-                    setQuery('')
-                    setPage(1)
+                    setFilter({ query: '' })
                   }}
                   className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--sea-ink-soft)] transition hover:bg-[var(--foam)] hover:text-[var(--vertex-blue)]"
                   aria-label="Clear audit search"
@@ -270,39 +284,41 @@ function AuditLogPage() {
 
             <button
               type="button"
-              onClick={() => refetch()}
+              onClick={() => router.invalidate()}
               className="rounded-xl bg-[var(--vertex-blue)] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[var(--lagoon-deep)]"
             >
               Refresh
             </button>
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <select value={category} onChange={(event) => {
+          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <select value={search.category} onChange={(event) => {
               const nextCategory = event.target.value
-              setCategory(nextCategory)
-              if (!nextCategory) setQuery('')
-              setPage(1)
+              setFilter({ category: nextCategory, query: nextCategory ? search.query : '' })
             }} className="rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 text-sm font-semibold">
               <option value="">All categories</option>
               {categoryOptions.map(option => <option key={option} value={option}>{option}</option>)}
             </select>
-            <select value={surface} onChange={(event) => {
-              setSurface(event.target.value)
-              setPage(1)
+            <select value={search.surface} onChange={(event) => {
+              setFilter({ surface: event.target.value })
             }} className="rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 text-sm font-semibold">
               <option value="">All surfaces</option>
               {surfaceOptions.map(option => <option key={option} value={option}>{option}</option>)}
             </select>
-            <select value={actorRole} onChange={(event) => {
-              setActorRole(event.target.value)
-              setPage(1)
+            <select value={search.actorRole} onChange={(event) => {
+              setFilter({ actorRole: event.target.value })
             }} className="rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 text-sm font-semibold">
               <option value="">All roles</option>
               <option value="admin">Admin</option>
               <option value="vertex_user">Vertex Staff</option>
               <option value="school_leader">School Leader</option>
               <option value="school_staff">School Staff</option>
+            </select>
+            <select value={search.schoolName} onChange={(event) => {
+              setFilter({ schoolName: event.target.value })
+            }} className="rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 text-sm font-semibold">
+              <option value="">All schools</option>
+              {data.schoolOptions.map(option => <option key={option} value={option}>{option}</option>)}
             </select>
           </div>
         </section>
@@ -336,7 +352,7 @@ function AuditLogPage() {
                   </div>
                 </button>
               ))}
-              {!isLoading && (data?.topSearches || []).length === 0 && (
+              {(data?.topSearches || []).length === 0 && (
                 <p className="rounded-xl border border-dashed border-[var(--chip-line)] bg-white p-4 text-sm font-semibold text-[var(--sea-ink-soft)]">
                   No VertexAI searches have been logged yet.
                 </p>
@@ -355,9 +371,7 @@ function AuditLogPage() {
                   key={item.category}
                   type="button"
                   onClick={() => {
-                    setCategory('ai')
-                    setQuery(item.category)
-                    setPage(1)
+                    setFilter({ category: 'ai', query: item.category })
                   }}
                   className="flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--chip-line)] bg-white px-3 py-2 text-sm font-bold text-[var(--sea-ink)] transition hover:bg-[var(--foam)]"
                 >
@@ -387,10 +401,9 @@ function AuditLogPage() {
                   {firstRow}-{lastRow} of {totalRows}
                 </span>
                 <select
-                  value={pageSize}
+                  value={search.pageSize}
                   onChange={(event) => {
-                    setPageSize(Number(event.target.value))
-                    setPage(1)
+                    setAuditSearch({ ...search, pageSize: Number(event.target.value), page: 1 })
                   }}
                   className="rounded-lg border border-[var(--chip-line)] bg-white px-2 py-1.5 text-xs font-bold text-[var(--sea-ink)]"
                   aria-label="Audit events per page"
@@ -404,12 +417,10 @@ function AuditLogPage() {
           </div>
 
           <div className="divide-y divide-[var(--line)]">
-            {isLoading ? (
-              <p className="p-5 text-sm font-semibold text-[var(--sea-ink-soft)]">Loading audit events...</p>
-            ) : rows.length === 0 ? (
+            {rows.length === 0 ? (
               <p className="p-5 text-sm font-semibold text-[var(--sea-ink-soft)]">No audit events match the current filters.</p>
             ) : rows.map((row) => (
-              <article key={row.id} className="grid gap-4 bg-white p-5 lg:grid-cols-[180px_minmax(0,1fr)_260px]">
+              <article key={row.id} className={`grid gap-4 bg-white p-5 lg:grid-cols-[180px_minmax(0,1fr)_260px] ${row.category === 'ai' ? 'border-l-4 border-l-[var(--vertex-gold)]' : ''}`}>
                 <div>
                   <div className="text-xs font-black uppercase tracking-wide text-[var(--vertex-blue)]">{formatLabel(row.action)}</div>
                   <div className="mt-1 text-xs font-semibold text-[var(--sea-ink-soft)]">{formatDate(row.occurredAt)}</div>
@@ -436,13 +447,34 @@ function AuditLogPage() {
                       <p className="mt-1 whitespace-pre-wrap break-words text-sm font-semibold text-[var(--sea-ink)]">{row.searchQuery}</p>
                     </div>
                   )}
+                  {row.category === 'ai' && (
+                    <details className="mt-3 rounded-xl border border-[var(--vertex-gold)] bg-amber-50/70 p-3">
+                      <summary className="cursor-pointer text-xs font-black uppercase tracking-wide text-[var(--vertex-blue)]">
+                        AI inference details
+                      </summary>
+                      <dl className="mt-3 grid gap-2 text-xs font-semibold text-[var(--sea-ink-soft)] sm:grid-cols-3">
+                        <div>
+                          <dt className="font-black text-[var(--sea-ink)]">Model</dt>
+                          <dd className="break-words">{row.aiModel || 'n/a'}</dd>
+                        </div>
+                        <div>
+                          <dt className="font-black text-[var(--sea-ink)]">Category</dt>
+                          <dd>{row.aiInferenceCategory || 'n/a'}</dd>
+                        </div>
+                        <div>
+                          <dt className="font-black text-[var(--sea-ink)]">Latency</dt>
+                          <dd>{row.aiLatencyMs ?? 'n/a'}{row.aiLatencyMs === null || row.aiLatencyMs === undefined ? '' : 'ms'}</dd>
+                        </div>
+                      </dl>
+                    </details>
+                  )}
                   {(row.metadata || row.aiModel || row.aiDiagnostic || row.aiLatencyMs || row.entityType || row.entityId) && (
                     <button
                       type="button"
                       onClick={() => setSelectedAuditEvent(row)}
                       className="mt-3 rounded-xl border border-[var(--chip-line)] px-3 py-2 text-xs font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--foam)]"
                     >
-                      View technical details
+                      {row.category === 'ai' ? 'View AI inference details' : 'View technical details'}
                     </button>
                   )}
                 </div>
@@ -466,13 +498,13 @@ function AuditLogPage() {
           {totalRows > 0 && (
             <div className="flex flex-col gap-3 border-t border-[var(--line)] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs font-bold text-[var(--sea-ink-soft)]">
-                Page {pagination?.page ?? page} of {totalPages}
+                Page {pagination?.page ?? search.page} of {totalPages}
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setPage(currentPage => Math.max(currentPage - 1, 1))}
-                  disabled={!pagination?.hasPreviousPage || isLoading}
+                  onClick={() => setAuditSearch({ page: Math.max(search.page - 1, 1) })}
+                  disabled={!pagination?.hasPreviousPage}
                   className="inline-flex items-center gap-1 rounded-xl border border-[var(--chip-line)] px-3 py-2 text-xs font-bold text-[var(--sea-ink)] transition hover:bg-[var(--foam)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ChevronLeft size={14} />
@@ -480,8 +512,8 @@ function AuditLogPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPage(currentPage => Math.min(currentPage + 1, totalPages))}
-                  disabled={!pagination?.hasNextPage || isLoading}
+                  onClick={() => setAuditSearch({ page: Math.min(search.page + 1, totalPages) })}
+                  disabled={!pagination?.hasNextPage}
                   className="inline-flex items-center gap-1 rounded-xl border border-[var(--chip-line)] px-3 py-2 text-xs font-bold text-[var(--sea-ink)] transition hover:bg-[var(--foam)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Next
@@ -523,9 +555,7 @@ function AuditLogPage() {
                   key={exactSearch.query}
                   type="button"
                   onClick={() => {
-                    setCategory('ai')
-                    setQuery(exactSearch.query)
-                    setPage(1)
+                    setFilter({ category: 'ai', query: exactSearch.query })
                     setSelectedSearchCategory('')
                   }}
                   className="w-full rounded-xl border border-[var(--chip-line)] bg-white p-3 text-left transition hover:border-[var(--vertex-blue)]"
@@ -592,7 +622,13 @@ function AuditLogPage() {
                   {selectedAuditEvent.searchQuery && (
                     <div><dt className="font-black text-[var(--sea-ink)]">Exact VertexAI Search</dt><dd className="whitespace-pre-wrap break-words">{selectedAuditEvent.searchQuery}</dd></div>
                   )}
-                  {selectedAuditEvent.aiLatencyMs && (
+                  {selectedAuditEvent.aiModel && (
+                    <div><dt className="font-black text-[var(--sea-ink)]">AI Model</dt><dd className="break-words">{selectedAuditEvent.aiModel}</dd></div>
+                  )}
+                  {selectedAuditEvent.aiInferenceCategory && (
+                    <div><dt className="font-black text-[var(--sea-ink)]">AI Category</dt><dd>{selectedAuditEvent.aiInferenceCategory}</dd></div>
+                  )}
+                  {selectedAuditEvent.aiLatencyMs !== null && selectedAuditEvent.aiLatencyMs !== undefined && (
                     <div><dt className="font-black text-[var(--sea-ink)]">AI Latency</dt><dd>{selectedAuditEvent.aiLatencyMs}ms</dd></div>
                   )}
                 </dl>

@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, Lock, Pencil, Send, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, Clock3, ExternalLink, Lock, Pencil, Send, Sparkles, X } from 'lucide-react'
 import { authClient } from '#/lib/auth-client'
 import { completeOnboardingTaskManually, getOnboardingTasks } from '#/lib/asana'
 import { uploadOnboardingFile } from '#/lib/uploads'
@@ -14,19 +14,39 @@ export const Route = createFileRoute('/school-onboarding')({
   component: SchoolOnboardingPage,
 })
 
-type Message = {
-  sender: 'user' | 'ai'
-  text: string
-  timestamp: string
-  model?: string
-  isFallback?: boolean
-}
-
 type VertexAIResponse = {
   text: string
   isFallback: boolean
   model: string
   diagnostic: string | null
+}
+
+type ChatTab = 'ai' | 'staff'
+
+type ConversationMessage = {
+  id: string
+  conversationId: string
+  schoolName: string
+  channel: ChatTab
+  senderType: 'client' | 'staff' | 'ai' | 'system'
+  senderUserId: string | null
+  senderEmail: string | null
+  senderName: string | null
+  body: string
+  aiModel: string | null
+  aiDiagnostic: string | null
+  metadata: unknown
+  createdAt: string
+}
+
+type ConversationView = {
+  conversationId: string
+  schoolName: string
+  channel: ChatTab
+  messages: ConversationMessage[]
+  unreadCount: number
+  lastReadAt: string | null
+  lastMessageCreatedAt: string | null
 }
 
 type ContractProfile = {
@@ -59,6 +79,29 @@ type TaskAssignment = {
   assignedToName: string | null
 }
 
+type IntakeRatingQuestion = {
+  id: string
+  label: string
+}
+
+type IntakeStep = {
+  id: string
+  title: string
+  prompt: string
+  kind: 'rating' | 'text'
+  helperText?: string
+  questions?: IntakeRatingQuestion[]
+  placeholder?: string
+}
+
+type IntakeResponses = Record<string, string | Record<string, number>>
+
+type SchoolIntakeResponseState = {
+  responses: IntakeResponses
+  completedStepIds: string[]
+  submittedAt: string | null
+}
+
 type OnboardingOperationStatus =
   | 'idle'
   | 'preparing-upload'
@@ -69,6 +112,27 @@ type OnboardingOperationStatus =
   | 'success'
   | 'error'
 
+type DueFlag = 'overdue' | 'today' | 'soon' | null
+
+function getDueFlagLabel(dueFlag: DueFlag, daysUntilDue: number | null) {
+  if (dueFlag === 'overdue') {
+    const daysOverdue = Math.abs(daysUntilDue ?? 0)
+    return daysOverdue === 1 ? 'Overdue by 1 day' : `Overdue by ${daysOverdue} days`
+  }
+  if (dueFlag === 'today') return 'Due today'
+  if (dueFlag === 'soon') {
+    return daysUntilDue === 1 ? 'Due tomorrow' : `Due in ${daysUntilDue} days`
+  }
+  return ''
+}
+
+function getDueFlagClass(dueFlag: DueFlag) {
+  if (dueFlag === 'overdue') return 'border-red-200 bg-red-100 text-red-700'
+  if (dueFlag === 'today') return 'border-amber-200 bg-amber-100 text-amber-800'
+  if (dueFlag === 'soon') return 'border-amber-100 bg-amber-50 text-amber-700'
+  return ''
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll('&', '&amp;')
@@ -76,6 +140,23 @@ function escapeHtml(value: string) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;')
+}
+
+async function fetchConversation(schoolName: string, channel: ChatTab) {
+  const response = await fetch(`/api/conversations?schoolName=${encodeURIComponent(schoolName)}&channel=${channel}`)
+  const data = await response.json() as ConversationView | { error?: string }
+  if (!response.ok) {
+    throw new Error('error' in data && data.error ? data.error : 'Unable to load conversation.')
+  }
+  return data as ConversationView
+}
+
+async function markConversationReadRequest(schoolName: string, channel: ChatTab) {
+  await fetch('/api/conversations/read', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ schoolName, channel }),
+  })
 }
 
 const reportContractDiscrepancy = createServerFn({ method: 'POST' })
@@ -460,12 +541,214 @@ const assignOnboardingTask = createServerFn({ method: 'POST' })
     return { success: true }
   })
 
+const getSchoolIntakeResponses = createServerFn({ method: 'GET' })
+  .validator((schoolName: string) => schoolName)
+  .handler(async ({ data: schoolName }) => {
+    const { db } = await import('#/db')
+    const { schoolOnboardingIntakeResponses } = await import('#/db/schema')
+    const { assertCanAccessSchool, requireSession } = await import('#/lib/security')
+    const { eq } = await import('drizzle-orm')
+
+    const session = await requireSession()
+    await assertCanAccessSchool(session, schoolName)
+
+    const rows = await db
+      .select()
+      .from(schoolOnboardingIntakeResponses)
+      .where(eq(schoolOnboardingIntakeResponses.schoolName, schoolName))
+      .all()
+
+    const row = rows[0]
+    if (!row) return getEmptyIntakeState()
+
+    try {
+      const submittedAt = row.submittedAt instanceof Date
+        ? row.submittedAt.toISOString()
+        : row.submittedAt
+          ? new Date(row.submittedAt).toISOString()
+          : null
+
+      return {
+        responses: JSON.parse(row.responseJson || '{}') as IntakeResponses,
+        completedStepIds: JSON.parse(row.completedStepIdsJson || '[]') as string[],
+        submittedAt,
+      }
+    } catch {
+      return getEmptyIntakeState()
+    }
+  })
+
+const saveSchoolIntakeResponses = createServerFn({ method: 'POST' })
+  .validator((data: {
+    schoolName: string
+    responses: IntakeResponses
+    completedStepIds: string[]
+  }) => data)
+  .handler(async ({ data }) => {
+    const { db } = await import('#/db')
+    const { schoolOnboardingIntakeResponses } = await import('#/db/schema')
+    const { assertCanAccessSchool, assertTrustedOrigin, requireSession } = await import('#/lib/security')
+
+    await assertTrustedOrigin()
+    const session = await requireSession()
+    await assertCanAccessSchool(session, data.schoolName)
+
+    const now = new Date()
+    const completedStepIds = Array.from(new Set(data.completedStepIds.filter(Boolean)))
+
+    await db
+      .insert(schoolOnboardingIntakeResponses)
+      .values({
+        schoolName: data.schoolName,
+        responseJson: JSON.stringify(data.responses || {}),
+        completedStepIdsJson: JSON.stringify(completedStepIds),
+        submittedByUserId: session.user.id,
+        submittedByEmail: session.user.email,
+        submittedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schoolOnboardingIntakeResponses.schoolName,
+        set: {
+          responseJson: JSON.stringify(data.responses || {}),
+          completedStepIdsJson: JSON.stringify(completedStepIds),
+          submittedByUserId: session.user.id,
+          submittedByEmail: session.user.email,
+          submittedAt: now,
+          updatedAt: now,
+        },
+      })
+      .run()
+
+    return {
+      success: true,
+      completedStepIds,
+      submittedAt: now.toISOString(),
+    }
+  })
+
 const profileStepCount = 1
 const completedStageStorageKey = 'vertex-bridge:onboarding-complete-stage'
 const resumeStepStorageKey = 'vertex-bridge:onboarding-resume-step'
 
+const sfoInternalReadinessQuestions: IntakeRatingQuestion[] = [
+  {
+    id: 'accounting-processes-documented',
+    label: 'Our accounting processes are documented and consistently followed.',
+  },
+  {
+    id: 'ap-demand-independent',
+    label: 'Our team can manage day-to-day accounts payable demands independently.',
+  },
+  {
+    id: 'budget-visibility',
+    label: 'We have reliable visibility into our budget position at any given time.',
+  },
+  {
+    id: 'payroll-predictable',
+    label: 'Our payroll process runs predictably and on schedule.',
+  },
+  {
+    id: 'grants-compliance-confidence',
+    label: 'We feel confident in our current grants tracking and compliance documentation.',
+  },
+]
+
+const sfoExternalReadinessQuestions: IntakeRatingQuestion[] = [
+  {
+    id: 'handoff-accounting',
+    label: 'Handing off day-to-day accounting responsibilities.',
+  },
+  {
+    id: 'share-financial-access',
+    label: 'Sharing access to financial systems and bank information.',
+  },
+  {
+    id: 'communication-rhythm',
+    label: 'Establishing a communication rhythm with an outside SFO team.',
+  },
+  {
+    id: 'partner-payroll',
+    label: 'Trusting an outside partner to manage payroll on our behalf.',
+  },
+  {
+    id: 'delegate-grants',
+    label: 'Delegating grants reporting and compliance documentation.',
+  },
+]
+
+function getIntakeSteps(): IntakeStep[] {
+  return [
+    {
+      id: 'sfo-internal-readiness',
+      title: 'SFO Internal Readiness',
+      prompt: 'Rate your confidence in each of the following statements about your current SFO operations.',
+      helperText: '1 = Not at all confident, 5 = Very confident',
+      kind: 'rating',
+      questions: sfoInternalReadinessQuestions,
+    },
+    {
+      id: 'sfo-external-readiness',
+      title: 'SFO External Readiness',
+      prompt: 'Rate your readiness to transition each of the following to an outside partner.',
+      helperText: '1 = Not ready, 5 = Fully ready',
+      kind: 'rating',
+      questions: sfoExternalReadinessQuestions,
+    },
+    {
+      id: 'team-context',
+      title: 'Team Context',
+      prompt: 'Tell us a little about your leadership team and their experience.',
+      helperText: 'Open text, 2-3 sentences.',
+      kind: 'text',
+      placeholder: 'For example: roles, years in education or school operations, and any relevant background.',
+    },
+    {
+      id: 'current-pain',
+      title: 'Current Pain',
+      prompt: "What's keeping your business office up at night right now?",
+      helperText: 'Open text, 2-3 sentences.',
+      kind: 'text',
+    },
+    {
+      id: 'success-definition',
+      title: 'Success Definition',
+      prompt: 'A year from now, what would make you say this partnership was worth it?',
+      helperText: 'Open text, 2-3 sentences.',
+      kind: 'text',
+    },
+  ]
+}
+
+function isIntakeStepComplete(step: IntakeStep, responses: IntakeResponses) {
+  const response = responses[step.id]
+
+  if (step.kind === 'text') {
+    return typeof response === 'string' && response.trim().length > 0
+  }
+
+  if (!step.questions || typeof response !== 'object' || response === null || Array.isArray(response)) {
+    return false
+  }
+
+  return step.questions.every((question) => {
+    const value = response[question.id]
+    return Number.isInteger(value) && value >= 1 && value <= 5
+  })
+}
+
+function getEmptyIntakeState(): SchoolIntakeResponseState {
+  return {
+    responses: {},
+    completedStepIds: [],
+    submittedAt: null,
+  }
+}
+
 type StoredResumeStep = {
-  type: 'profile' | 'task'
+  type: 'profile' | 'intake' | 'task'
+  intakeStepId?: string
   taskId?: string
 }
 
@@ -543,6 +826,49 @@ function LoadingJourneyOverlay() {
   )
 }
 
+const completionBurstOffsets = [
+  ['-8rem', '-2.6rem'],
+  ['-5.8rem', '-0.4rem'],
+  ['-6.8rem', '2.2rem'],
+  ['-2.4rem', '-2.9rem'],
+  ['-1.2rem', '2.8rem'],
+  ['2rem', '-2.6rem'],
+  ['3.2rem', '2.6rem'],
+  ['6.4rem', '-1.9rem'],
+  ['7.8rem', '0.7rem'],
+  ['5.4rem', '2.4rem'],
+] as const
+
+function CompletionCelebration({ taskName }: { taskName: string }) {
+  return (
+    <div className="completion-celebration pointer-events-none fixed left-1/2 top-5 z-[90] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2" role="status" aria-live="polite">
+      <div className="relative overflow-hidden rounded-xl border border-green-200 bg-white px-4 py-3 shadow-2xl">
+        <div className="completion-celebration-burst" aria-hidden="true">
+          {completionBurstOffsets.map(([burstX, burstY], index) => (
+            <span
+              key={`${burstX}-${burstY}`}
+              style={{
+                '--burst-index': index,
+                '--burst-x': burstX,
+                '--burst-y': burstY,
+              } as React.CSSProperties}
+            />
+          ))}
+        </div>
+        <div className="relative flex items-center gap-3">
+          <span className="completion-celebration-mark inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-100" aria-hidden="true">
+            <span />
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--vertex-gold)]">Progress completed</p>
+            <p className="truncate text-sm font-bold text-[var(--sea-ink)]">{taskName}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function renderChatMarkdown(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g)
 
@@ -581,6 +907,7 @@ function SchoolOnboardingPage() {
   const [viewMode, setViewMode] = useState<'journey' | 'all'>('journey')
   const [selectedSchoolName, setSelectedSchoolName] = useState('')
   const [showProfileStep, setShowProfileStep] = useState(true)
+  const [activeIntakeStepIndex, setActiveIntakeStepIndex] = useState<number | null>(null)
   const [activeTaskIndex, setActiveTaskIndex] = useState(0)
   const [showCompleteStage, setShowCompleteStage] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
@@ -595,6 +922,15 @@ function SchoolOnboardingPage() {
   })
   const [showMyTasksOnly, setShowMyTasksOnly] = useState(false)
   const [ownerEditorTaskId, setOwnerEditorTaskId] = useState<string | null>(null)
+  const [dismissedAttentionKey, setDismissedAttentionKey] = useState<string | null>(null)
+  const [intakeResponses, setIntakeResponses] = useState<IntakeResponses>({})
+  const [completedIntakeStepIds, setCompletedIntakeStepIds] = useState<string[]>([])
+  const [intakeSaving, setIntakeSaving] = useState(false)
+  const [intakeStatus, setIntakeStatus] = useState<{
+    type: 'success' | 'error' | 'warning'
+    title: string
+    message: string
+  } | null>(null)
   const [showDiscrepancyForm, setShowDiscrepancyForm] = useState(false)
   const [discrepancy, setDiscrepancy] = useState('')
   const [discrepancySending, setDiscrepancySending] = useState(false)
@@ -608,8 +944,14 @@ function SchoolOnboardingPage() {
   const [dragActive, setDragActive] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<OnboardingOperationStatus>('idle')
   const [uploadError, setUploadError] = useState('')
+  const [completionCelebration, setCompletionCelebration] = useState<{
+    taskName: string
+  } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pendingStatusTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
+  const completionCelebrationTaskRef = useRef<string | null>(null)
+  const previousCompletedCountRef = useRef<number | null>(null)
+  const celebrationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const clearPendingStatusTimers = () => {
     pendingStatusTimersRef.current.forEach(clearTimeout)
@@ -632,27 +974,24 @@ function SchoolOnboardingPage() {
     pendingStatusTimersRef.current.push(timer)
   }
 
-  // AI Helper state
+  // Chat state
+  const [activeChatTab, setActiveChatTab] = useState<ChatTab>('ai')
   const [chatInput, setChatInput] = useState('')
-  const [chatHistory, setChatHistory] = useState<Message[]>([
-    {
-      sender: 'ai',
-      text: 'Hi! I am your Vertex onboarding assistant. I can help explain the required SFO onboarding documents, answer FAQs, and guide you on what to do next.',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-  ])
   const [aiLoading, setAiLoading] = useState(false)
+  const [teamSending, setTeamSending] = useState(false)
+  const [chatError, setChatError] = useState('')
   const chatBottomRef = useRef<HTMLDivElement>(null)
+  const chatReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const getModelBadge = (msg: Message) => {
-    if (msg.model === '@cf/google/gemma-4-26b-a4b-it') {
+  const getModelBadge = (msg: ConversationMessage) => {
+    if (msg.aiModel === '@cf/google/gemma-4-26b-a4b-it') {
       return {
         label: 'VertexAI',
         className: 'bg-green-100 text-green-700',
       }
     }
 
-    if (msg.model === 'gemma-error') {
+    if (msg.aiModel === 'gemma-error' || msg.aiModel === 'vertexai-error') {
       return {
         label: 'VertexAI',
         className: 'bg-red-100 text-red-700',
@@ -670,6 +1009,25 @@ function SchoolOnboardingPage() {
 
   const selectedProfile = schoolProfiles.find((school) => school.schoolName === selectedSchoolName) ?? schoolProfiles[0] ?? null
   const clientName = selectedProfile?.schoolName || profile.schoolName
+
+  const { data: aiConversation, isLoading: aiConversationLoading } = useQuery({
+    queryKey: ['school-conversation', selectedSchoolName, 'ai'],
+    queryFn: () => fetchConversation(selectedSchoolName, 'ai'),
+    enabled: Boolean(session?.user && selectedSchoolName),
+  })
+
+  const { data: staffConversation, isLoading: staffConversationLoading } = useQuery({
+    queryKey: ['school-conversation', selectedSchoolName, 'staff'],
+    queryFn: () => fetchConversation(selectedSchoolName, 'staff'),
+    enabled: Boolean(session?.user && selectedSchoolName),
+  })
+
+  const activeConversation = activeChatTab === 'ai' ? aiConversation : staffConversation
+  const activeChatMessages = activeConversation?.messages ?? []
+  const activeChatLoading = activeChatTab === 'ai' ? aiConversationLoading : staffConversationLoading
+  const staffUnreadCount = staffConversation?.unreadCount ?? 0
+  const aiUnreadCount = aiConversation?.unreadCount ?? 0
+  const hasUnreadTeamMessages = staffUnreadCount > 0
 
   // Query tasks using TanStack Query
   const { data: tasks = [], isLoading, isError, refetch } = useQuery({
@@ -690,6 +1048,12 @@ function SchoolOnboardingPage() {
     enabled: Boolean(session?.user && selectedSchoolName),
   })
 
+  const { data: savedIntakeState = getEmptyIntakeState(), isLoading: intakeLoading } = useQuery({
+    queryKey: ['school-intake-responses', selectedSchoolName],
+    queryFn: () => getSchoolIntakeResponses({ data: selectedSchoolName }),
+    enabled: Boolean(session?.user && selectedSchoolName),
+  })
+
   const assignmentsByTaskId = new Map(taskAssignments.map((assignment) => [assignment.asanaTaskId, assignment]))
   const currentUserEmail = session?.user?.email || ''
   const currentSchoolContact = schoolContacts.find((contact) => contact.email === currentUserEmail)
@@ -704,11 +1068,92 @@ function SchoolOnboardingPage() {
 
   const actionableTasks = tasks.filter((task) => isTaskActionableForCurrentUser(task.id))
   const displayedTasks = showMyTasksOnly ? actionableTasks : tasks
+  const incompleteActionableTasks = actionableTasks.filter((task) => !task.completed)
+  const attentionTasks = incompleteActionableTasks
+    .filter((task) => task.isUrgent || Boolean(task.dueFlag))
+    .sort((a, b) => {
+      if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1
+      if (a.dueFlag && b.dueFlag && a.daysUntilDue !== b.daysUntilDue) {
+        return (a.daysUntilDue ?? Number.MAX_SAFE_INTEGER) - (b.daysUntilDue ?? Number.MAX_SAFE_INTEGER)
+      }
+      if (a.dueFlag) return -1
+      if (b.dueFlag) return 1
+      if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate)
+      if (a.dueDate) return -1
+      if (b.dueDate) return 1
+      return a.name.localeCompare(b.name)
+    })
+  const visibleAttentionTasks = attentionTasks.slice(0, 3)
+  const hiddenAttentionTaskCount = Math.max(attentionTasks.length - visibleAttentionTasks.length, 0)
+  const attentionNotificationKey = `${selectedSchoolName}:${attentionTasks.map((task) => task.id).join('|')}`
+  const showAttentionNotification = visibleAttentionTasks.length > 0 && dismissedAttentionKey !== attentionNotificationKey
 
   // Scroll to bottom of chat when history updates
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [chatHistory])
+  }, [activeChatMessages.length, activeChatTab, isChatOpen])
+
+  useEffect(() => {
+    if (!isChatOpen || !selectedSchoolName) return
+    void markConversationReadRequest(selectedSchoolName, activeChatTab)
+      .then(() => queryClient.invalidateQueries({ queryKey: ['school-conversation', selectedSchoolName, activeChatTab] }))
+      .catch(() => {})
+  }, [activeChatMessages.length, activeChatTab, activeConversation?.lastMessageCreatedAt, isChatOpen, selectedSchoolName])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('vertex-bridge:staff-unread-count', String(staffUnreadCount))
+    window.dispatchEvent(new CustomEvent('vertex-bridge:staff-unread-count', {
+      detail: { count: staffUnreadCount },
+    }))
+  }, [staffUnreadCount])
+
+  useEffect(() => {
+    if (!selectedSchoolName) return
+
+    let socket: WebSocket | null = null
+    let closedByEffect = false
+    let reconnectAttempt = 0
+
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      socket = new WebSocket(`${protocol}//${window.location.host}/api/conversations/ws?schoolName=${encodeURIComponent(selectedSchoolName)}`)
+
+      socket.onopen = () => {
+        reconnectAttempt = 0
+      }
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          if (payload?.schoolName !== selectedSchoolName) return
+          if (payload?.channel === 'ai' || payload?.channel === 'staff') {
+            queryClient.invalidateQueries({ queryKey: ['school-conversation', selectedSchoolName, payload.channel] })
+          }
+        } catch {
+          // Ignore non-JSON keepalive frames.
+        }
+      }
+
+      socket.onclose = () => {
+        if (closedByEffect) return
+        reconnectAttempt += 1
+        const delayMs = Math.min(1000 * reconnectAttempt, 5000)
+        chatReconnectTimerRef.current = setTimeout(connect, delayMs)
+      }
+    }
+
+    connect()
+
+    return () => {
+      closedByEffect = true
+      if (chatReconnectTimerRef.current) {
+        clearTimeout(chatReconnectTimerRef.current)
+        chatReconnectTimerRef.current = null
+      }
+      socket?.close()
+    }
+  }, [selectedSchoolName, queryClient])
 
   useEffect(() => {
     const openStoredChat = window.sessionStorage.getItem('vertex-bridge:open-ai-chat') === 'true'
@@ -768,15 +1213,29 @@ function SchoolOnboardingPage() {
 
     window.localStorage.setItem('vertex-bridge:selected-school', selectedSchoolName)
     setShowProfileStep(true)
+    setActiveIntakeStepIndex(null)
     setActiveTaskIndex(0)
     setShowCompleteStage(false)
     setViewMode(selectedProfile?.contactRole === 'school_staff' ? 'all' : 'journey')
     resetOperationStatus()
     setDiscrepancy('')
     setDiscrepancyStatus(null)
+    setIntakeStatus(null)
+    setIntakeResponses({})
+    setCompletedIntakeStepIds([])
     setShowMyTasksOnly(selectedProfile?.contactRole === 'school_staff')
     setOwnerEditorTaskId(null)
+    setCompletionCelebration(null)
+    completionCelebrationTaskRef.current = null
+    previousCompletedCountRef.current = null
   }, [selectedSchoolName, selectedProfile?.contactRole])
+
+  useEffect(() => {
+    if (!selectedSchoolName || intakeLoading) return
+
+    setIntakeResponses(savedIntakeState.responses || {})
+    setCompletedIntakeStepIds(savedIntakeState.completedStepIds || [])
+  }, [intakeLoading, savedIntakeState, selectedSchoolName])
 
   // Get active task
   const activeTask = tasks[activeTaskIndex] || null
@@ -789,9 +1248,24 @@ function SchoolOnboardingPage() {
       : activeTask.notes
     : 'No instructions provided.'
   const displayedInstructionText = instructionText || 'Use the button below to continue this onboarding step.'
+  const intakeSteps = useMemo(() => getIntakeSteps(), [])
+  const activeIntakeStep = activeIntakeStepIndex === null ? null : intakeSteps[activeIntakeStepIndex] || null
+  const asanaStepOffset = profileStepCount + intakeSteps.length
+  const completedIntakeCount = intakeSteps.filter((step) => (
+    completedIntakeStepIds.includes(step.id) && isIntakeStepComplete(step, intakeResponses)
+  )).length
+  const currentIncompleteIntakeStepIndex = intakeSteps.findIndex((step) => (
+    !completedIntakeStepIds.includes(step.id) || !isIntakeStepComplete(step, intakeResponses)
+  ))
+  const currentIncompleteIntakeStep = currentIncompleteIntakeStepIndex >= 0
+    ? intakeSteps[currentIncompleteIntakeStepIndex]
+    : null
+  const currentIncompleteIntakeStepNumber = currentIncompleteIntakeStepIndex >= 0
+    ? currentIncompleteIntakeStepIndex + profileStepCount + 1
+    : null
 
-  const completedCount = profileStepCount + tasks.filter(t => t.completed).length
-  const totalCount = profileStepCount + tasks.length
+  const completedCount = profileStepCount + completedIntakeCount + tasks.filter(t => t.completed).length
+  const totalCount = profileStepCount + intakeSteps.length + tasks.length
   const journeyStepCount = totalCount
   const currentCompletedStageStorageKey = selectedSchoolName
     ? `${completedStageStorageKey}:${selectedSchoolName}`
@@ -799,9 +1273,15 @@ function SchoolOnboardingPage() {
   const currentResumeStepStorageKey = selectedSchoolName
     ? `${resumeStepStorageKey}:${selectedSchoolName}`
     : resumeStepStorageKey
-  const progressPercent = isLoading || totalCount === 0 ? 0 : Math.round((completedCount / totalCount) * 100)
-  const allStepsComplete = !isLoading && tasks.length > 0 && progressPercent === 100
-  const currentStepNumber = showProfileStep ? 1 : activeTask ? activeTaskIndex + profileStepCount + 1 : null
+  const progressPercent = isLoading || intakeLoading || totalCount === 0 ? 0 : Math.round((completedCount / totalCount) * 100)
+  const allStepsComplete = !isLoading && !intakeLoading && tasks.length > 0 && completedCount === totalCount
+  const currentStepNumber = showProfileStep
+    ? 1
+    : activeIntakeStepIndex !== null && activeIntakeStep
+      ? activeIntakeStepIndex + profileStepCount + 1
+      : activeTask
+        ? activeTaskIndex + asanaStepOffset + 1
+        : null
   const isOperationPending = !['idle', 'success', 'error'].includes(uploadProgress)
   const pendingStatus = {
     'preparing-upload': {
@@ -826,6 +1306,39 @@ function SchoolOnboardingPage() {
     },
   }[uploadProgress as Exclude<OnboardingOperationStatus, 'idle' | 'success' | 'error'>]
 
+  useEffect(() => {
+    if (isLoading || intakeLoading || totalCount === 0) return
+
+    const previousCompletedCount = previousCompletedCountRef.current
+    previousCompletedCountRef.current = completedCount
+
+    if (previousCompletedCount === null || completedCount <= previousCompletedCount) return
+
+    const completedTaskName = completionCelebrationTaskRef.current
+    completionCelebrationTaskRef.current = null
+
+    if (!completedTaskName) return
+
+    if (celebrationTimeoutRef.current) {
+      clearTimeout(celebrationTimeoutRef.current)
+    }
+
+    setCompletionCelebration({
+      taskName: completedTaskName,
+    })
+
+    celebrationTimeoutRef.current = setTimeout(() => {
+      setCompletionCelebration(null)
+      celebrationTimeoutRef.current = null
+    }, 2800)
+  }, [completedCount, intakeLoading, isLoading, totalCount])
+
+  useEffect(() => () => {
+    if (celebrationTimeoutRef.current) {
+      clearTimeout(celebrationTimeoutRef.current)
+    }
+  }, [])
+
   const saveResumeStep = (step: StoredResumeStep) => {
     if (!selectedSchoolName) return
     window.localStorage.setItem(currentResumeStepStorageKey, JSON.stringify(step))
@@ -838,24 +1351,51 @@ function SchoolOnboardingPage() {
   const currentIncompleteTaskIndex = currentIncompleteTaskEntry?.index ?? -1
   const currentIncompleteTask = currentIncompleteTaskEntry?.task ?? null
   const currentIncompleteStepNumber = currentIncompleteTaskIndex >= 0
-    ? currentIncompleteTaskIndex + profileStepCount + 1
+    ? currentIncompleteTaskIndex + asanaStepOffset + 1
     : null
   const nextIncompleteTaskEntry = currentIncompleteTaskIndex >= 0
     ? scopedTaskEntries.find(({ task, index }) => index > currentIncompleteTaskIndex && !task.completed)
     : null
-  const canJumpToCurrentIncompleteStep = !isLoading
-    && Boolean(currentIncompleteTask)
-    && currentIncompleteTaskIndex >= 0
-    && (showProfileStep || showCompleteStage || viewMode !== 'journey' || activeTaskIndex !== currentIncompleteTaskIndex)
+  const canJumpToCurrentIncompleteStep = !isLoading && (
+    currentIncompleteIntakeStep
+      ? showProfileStep || showCompleteStage || viewMode !== 'journey' || activeIntakeStepIndex !== currentIncompleteIntakeStepIndex
+      : Boolean(currentIncompleteTask)
+        && currentIncompleteTaskIndex >= 0
+        && (showProfileStep || showCompleteStage || viewMode !== 'journey' || activeIntakeStepIndex !== null || activeTaskIndex !== currentIncompleteTaskIndex)
+  )
 
   const goToCurrentIncompleteStep = () => {
+    if (currentIncompleteIntakeStep && currentIncompleteIntakeStepIndex >= 0) {
+      setActiveIntakeStepIndex(currentIncompleteIntakeStepIndex)
+      setShowProfileStep(false)
+      setShowCompleteStage(false)
+      setViewMode('journey')
+      saveResumeStep({ type: 'intake', intakeStepId: currentIncompleteIntakeStep.id })
+      resetOperationStatus()
+      return
+    }
+
     if (!currentIncompleteTask || currentIncompleteTaskIndex < 0) return
 
     setActiveTaskIndex(currentIncompleteTaskIndex)
+    setActiveIntakeStepIndex(null)
     setShowProfileStep(false)
     setShowCompleteStage(false)
     setViewMode('journey')
     saveResumeStep({ type: 'task', taskId: currentIncompleteTask.id })
+    resetOperationStatus()
+  }
+
+  const goToTask = (taskId: string) => {
+    const taskIndex = tasks.findIndex((task) => task.id === taskId)
+    if (taskIndex < 0) return
+
+    setActiveTaskIndex(taskIndex)
+    setActiveIntakeStepIndex(null)
+    setShowProfileStep(false)
+    setShowCompleteStage(false)
+    setViewMode('journey')
+    saveResumeStep({ type: 'task', taskId })
     resetOperationStatus()
   }
 
@@ -873,6 +1413,14 @@ function SchoolOnboardingPage() {
         label: 'Current step',
         title: 'Onboarding complete',
         meta: `${totalCount} of ${totalCount} steps`,
+      }
+    }
+
+    if (currentIncompleteIntakeStep && currentIncompleteIntakeStepNumber) {
+      return {
+        label: 'Current step',
+        title: currentIncompleteIntakeStep.title,
+        meta: `Step ${currentIncompleteIntakeStepNumber} of ${totalCount}`,
       }
     }
 
@@ -916,13 +1464,29 @@ function SchoolOnboardingPage() {
       }
     }
 
+    if (currentIncompleteIntakeStep) {
+      const nextIntakeStep = intakeSteps.find((step, index) => (
+        index > currentIncompleteIntakeStepIndex
+          && (!completedIntakeStepIds.includes(step.id) || !isIntakeStepComplete(step, intakeResponses))
+      ))
+      return {
+        label: 'Next step',
+        title: nextIntakeStep?.title || currentIncompleteTask?.name || 'Asana onboarding tasks',
+        meta: nextIntakeStep
+          ? `Step ${intakeSteps.findIndex((step) => step.id === nextIntakeStep.id) + profileStepCount + 1} of ${totalCount}`
+          : currentIncompleteStepNumber
+            ? `Step ${currentIncompleteStepNumber} of ${totalCount}`
+            : 'After readiness questions',
+      }
+    }
+
     if (currentIncompleteTask) {
       const nextTask = nextIncompleteTaskEntry?.task
       return {
         label: 'Next step',
         title: nextTask?.name || 'Complete assigned work',
         meta: nextIncompleteTaskEntry
-          ? `Step ${nextIncompleteTaskEntry.index + profileStepCount + 1} of ${totalCount}`
+          ? `Step ${nextIncompleteTaskEntry.index + asanaStepOffset + 1} of ${totalCount}`
           : 'After the current assigned step',
       }
     }
@@ -1025,6 +1589,22 @@ function SchoolOnboardingPage() {
       }
     }
 
+    if (activeIntakeStep) {
+      return {
+        pageName: 'School Onboarding',
+        path: window.location.pathname,
+        viewMode,
+        stage: 'intake-question' as const,
+        stageLabel: activeIntakeStep.title,
+        currentStepNumber,
+        totalSteps: journeyStepCount,
+        completedSteps: completedCount,
+        progressPercent,
+        allStepsComplete,
+        isCompleteStageVisible,
+      }
+    }
+
     return {
       pageName: 'School Onboarding',
       path: window.location.pathname,
@@ -1062,10 +1642,45 @@ function SchoolOnboardingPage() {
 
     if (parsedStep?.type === 'profile') {
       setShowProfileStep(true)
+      setActiveIntakeStepIndex(null)
       setActiveTaskIndex(0)
       setShowCompleteStage(false)
       setViewMode('journey')
       resetOperationStatus()
+      return
+    }
+
+    if (parsedStep?.type === 'intake' && parsedStep.intakeStepId) {
+      const savedIntakeIndex = intakeSteps.findIndex((step) => step.id === parsedStep.intakeStepId)
+      const nextIntakeIndex = savedIntakeIndex >= 0
+        && (!completedIntakeStepIds.includes(intakeSteps[savedIntakeIndex].id) || !isIntakeStepComplete(intakeSteps[savedIntakeIndex], intakeResponses))
+        ? savedIntakeIndex
+        : intakeSteps.findIndex((step, index) => (
+          index > savedIntakeIndex
+            && (!completedIntakeStepIds.includes(step.id) || !isIntakeStepComplete(step, intakeResponses))
+        ))
+      const fallbackIntakeIndex = nextIntakeIndex >= 0
+        ? nextIntakeIndex
+        : intakeSteps.findIndex((step) => !completedIntakeStepIds.includes(step.id) || !isIntakeStepComplete(step, intakeResponses))
+
+      if (fallbackIntakeIndex >= 0) {
+        setActiveIntakeStepIndex(fallbackIntakeIndex)
+        setShowProfileStep(false)
+        setShowCompleteStage(false)
+        setViewMode('journey')
+        resetOperationStatus()
+        saveResumeStep({ type: 'intake', intakeStepId: intakeSteps[fallbackIntakeIndex].id })
+        return
+      }
+    }
+
+    if (currentIncompleteIntakeStep && currentIncompleteIntakeStepIndex >= 0) {
+      setActiveIntakeStepIndex(currentIncompleteIntakeStepIndex)
+      setShowProfileStep(false)
+      setShowCompleteStage(false)
+      setViewMode('journey')
+      resetOperationStatus()
+      saveResumeStep({ type: 'intake', intakeStepId: currentIncompleteIntakeStep.id })
       return
     }
 
@@ -1083,12 +1698,13 @@ function SchoolOnboardingPage() {
     if (fallbackTaskIndex < 0) return
 
     setActiveTaskIndex(fallbackTaskIndex)
+    setActiveIntakeStepIndex(null)
     setShowProfileStep(false)
     setShowCompleteStage(false)
     setViewMode('journey')
     resetOperationStatus()
     saveResumeStep({ type: 'task', taskId: tasks[fallbackTaskIndex].id })
-  }, [currentContactRole, currentResumeStepStorageKey, isLoading, selectedSchoolName, tasks])
+  }, [completedIntakeStepIds, currentContactRole, currentIncompleteIntakeStep, currentIncompleteIntakeStepIndex, currentResumeStepStorageKey, intakeResponses, intakeSteps, isLoading, selectedSchoolName, tasks])
 
   useEffect(() => {
     if (isLoading) return
@@ -1169,19 +1785,10 @@ function SchoolOnboardingPage() {
       if (result.success && result.asanaUpdated !== false) {
         clearPendingStatusTimers()
         setUploadProgress('refreshing')
+        completionCelebrationTaskRef.current = activeTask.name
         // Invalidate tasks query to trigger dynamic update
         await queryClient.invalidateQueries({ queryKey: ['onboarding-tasks'] })
         setUploadProgress('success')
-        
-        // Add success notification in chat as well
-        setChatHistory(prev => [
-          ...prev,
-          {
-            sender: 'ai',
-            text: `Thanks, ${contactName}. Your file "${file.name}" has been successfully uploaded for ${clientName}, and this onboarding step has been marked complete in Asana.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ])
       } else {
         clearPendingStatusTimers()
         setUploadProgress('error')
@@ -1218,16 +1825,9 @@ function SchoolOnboardingPage() {
       if (result.success) {
         clearPendingStatusTimers()
         setUploadProgress('refreshing')
+        completionCelebrationTaskRef.current = activeTask.name
         await queryClient.invalidateQueries({ queryKey: ['onboarding-tasks'] })
         setUploadProgress('success')
-        setChatHistory(prev => [
-          ...prev,
-          {
-            sender: 'ai',
-            text: `Thanks, ${contactName}. "${activeTask.name}" has been marked complete for ${clientName}.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ])
       } else {
         clearPendingStatusTimers()
         setUploadProgress('error')
@@ -1242,12 +1842,110 @@ function SchoolOnboardingPage() {
 
   const handleProfileConfirm = () => {
     setShowProfileStep(false)
+    if (intakeSteps[0]) {
+      setActiveIntakeStepIndex(0)
+      saveResumeStep({ type: 'intake', intakeStepId: intakeSteps[0].id })
+    } else {
+      setActiveIntakeStepIndex(null)
+      if (tasks[0]) {
+        saveResumeStep({ type: 'task', taskId: tasks[0].id })
+      }
+    }
     setActiveTaskIndex(0)
     setViewMode('journey')
-    if (tasks[0]) {
-      saveResumeStep({ type: 'task', taskId: tasks[0].id })
-    }
     resetOperationStatus()
+  }
+
+  const updateIntakeRating = (stepId: string, questionId: string, value: number) => {
+    setIntakeResponses((currentResponses) => {
+      const currentStepResponse = currentResponses[stepId]
+      const ratingResponse = typeof currentStepResponse === 'object' && currentStepResponse !== null && !Array.isArray(currentStepResponse)
+        ? currentStepResponse
+        : {}
+
+      return {
+        ...currentResponses,
+        [stepId]: {
+          ...ratingResponse,
+          [questionId]: value,
+        },
+      }
+    })
+    setIntakeStatus(null)
+  }
+
+  const updateIntakeText = (stepId: string, value: string) => {
+    setIntakeResponses((currentResponses) => ({
+      ...currentResponses,
+      [stepId]: value,
+    }))
+    setIntakeStatus(null)
+  }
+
+  const goToIntakeStep = (stepIndex: number) => {
+    const step = intakeSteps[stepIndex]
+    if (!step) return
+
+    setActiveIntakeStepIndex(stepIndex)
+    setShowProfileStep(false)
+    setShowCompleteStage(false)
+    setViewMode('journey')
+    saveResumeStep({ type: 'intake', intakeStepId: step.id })
+    resetOperationStatus()
+  }
+
+  const saveActiveIntakeStep = async () => {
+    if (!activeIntakeStep || activeIntakeStepIndex === null || intakeSaving) return
+
+    if (!isIntakeStepComplete(activeIntakeStep, intakeResponses)) {
+      setIntakeStatus({
+        type: 'error',
+        title: 'Answer required',
+        message: activeIntakeStep.kind === 'rating'
+          ? 'Rate every statement before continuing.'
+          : 'Add a short response before continuing.',
+      })
+      return
+    }
+
+    const nextCompletedStepIds = Array.from(new Set([...completedIntakeStepIds, activeIntakeStep.id]))
+    setIntakeSaving(true)
+    setIntakeStatus(null)
+
+    try {
+      await saveSchoolIntakeResponses({
+        data: {
+          schoolName: clientName,
+          responses: intakeResponses,
+          completedStepIds: nextCompletedStepIds,
+        },
+      })
+      setCompletedIntakeStepIds(nextCompletedStepIds)
+      await queryClient.invalidateQueries({ queryKey: ['school-intake-responses', selectedSchoolName] })
+
+      const nextIntakeStepIndex = activeIntakeStepIndex + 1
+      if (intakeSteps[nextIntakeStepIndex]) {
+        goToIntakeStep(nextIntakeStepIndex)
+      } else {
+        setActiveIntakeStepIndex(null)
+        setActiveTaskIndex(0)
+        setShowProfileStep(false)
+        setShowCompleteStage(false)
+        setViewMode('journey')
+        if (tasks[0]) {
+          saveResumeStep({ type: 'task', taskId: tasks[0].id })
+        }
+        resetOperationStatus()
+      }
+    } catch (err: any) {
+      setIntakeStatus({
+        type: 'error',
+        title: 'Answers not saved',
+        message: err.message || 'Please try again before continuing.',
+      })
+    } finally {
+      setIntakeSaving(false)
+    }
   }
 
   const handleDiscrepancy = () => {
@@ -1317,17 +2015,37 @@ function SchoolOnboardingPage() {
     }
   }
 
-  // AI Assistant trigger
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!chatInput.trim()) return
+    if (!chatInput.trim() || !selectedSchoolName) return
 
     const userMsg = chatInput.trim()
     setChatInput('')
-    
-    const userTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    setChatHistory(prev => [...prev, { sender: 'user', text: userMsg, timestamp: userTimestamp }])
-    
+    setChatError('')
+
+    if (activeChatTab === 'staff') {
+      setTeamSending(true)
+      try {
+        const response = await fetch('/api/conversations/messages', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            schoolName: selectedSchoolName,
+            body: userMsg,
+          }),
+        })
+        const data = await response.json() as { error?: string }
+        if (!response.ok) throw new Error(data.error || 'Unable to send message.')
+        await queryClient.invalidateQueries({ queryKey: ['school-conversation', selectedSchoolName, 'staff'] })
+      } catch (err: any) {
+        setChatInput(userMsg)
+        setChatError(err?.message || 'Unable to send message to the Vertex Team.')
+      } finally {
+        setTeamSending(false)
+      }
+      return
+    }
+
     setAiLoading(true)
     try {
       const activeTaskInfo = showProfileStep
@@ -1338,6 +2056,16 @@ function SchoolOnboardingPage() {
             completed: true,
             stepNumber: 1,
             functionalArea: 'Profile',
+            isUrgent: false,
+          }
+        : activeIntakeStep
+        ? {
+            name: activeIntakeStep.title,
+            notes: activeIntakeStep.prompt,
+            dueDate: null,
+            completed: isIntakeStepComplete(activeIntakeStep, intakeResponses),
+            stepNumber: currentStepNumber,
+            functionalArea: 'Readiness intake',
             isUrgent: false,
           }
         : activeTask
@@ -1370,13 +2098,19 @@ function SchoolOnboardingPage() {
           currentTask: activeTaskInfo,
           pageContext: getPageContext(),
           schoolContext: {
-            schoolName: profile.schoolName,
+            schoolName: clientName,
             contactName,
             services: profile.services,
             clientType: profile.clientType,
             state: profile.state,
           },
-          history: chatHistory.slice(-6).map(h => ({ sender: h.sender, text: h.text }))
+          history: activeChatMessages
+            .filter((message) => message.channel === 'ai' && (message.senderType === 'client' || message.senderType === 'ai'))
+            .slice(-6)
+            .map((message) => ({
+              sender: message.senderType === 'client' ? 'user' : 'ai',
+              text: message.body,
+            })),
         }),
       })
 
@@ -1386,30 +2120,16 @@ function SchoolOnboardingPage() {
         throw new Error(aiResponse.text || `VertexAI API returned HTTP ${response.status}`)
       }
 
-      const aiTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      setChatHistory(prev => [
-        ...prev,
-        {
-          sender: 'ai',
-          text: aiResponse.text,
-          timestamp: aiTimestamp,
-          model: aiResponse.model,
-          isFallback: aiResponse.isFallback
-        }
-      ])
+      await queryClient.invalidateQueries({ queryKey: ['school-conversation', selectedSchoolName, 'ai'] })
     } catch (err: any) {
       console.error('VertexAI chat request failed:', err)
-      const aiTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      setChatHistory(prev => [...prev, {
-        sender: 'ai',
-        text: err instanceof Error && err.message
+      setChatInput(userMsg)
+      setChatError(
+        err instanceof Error && err.message
           ? err.message
           : 'VertexAI could not connect just now. If this page was open during an update, refresh once and try again.',
-        timestamp: aiTimestamp,
-        model: 'vertexai-error',
-        isFallback: false
-      }])
-  } finally {
+      )
+    } finally {
       setAiLoading(false)
     }
   }
@@ -1470,6 +2190,9 @@ function SchoolOnboardingPage() {
   return (
     <main className="page-wrap page-shell pb-28">
       {isLoading && <LoadingJourneyOverlay />}
+      {completionCelebration && (
+        <CompletionCelebration taskName={completionCelebration.taskName} />
+      )}
       {/* Main Wizard / Checklist Panel (Left) */}
       <section className="w-full space-y-4">
         <div className="island-shell rounded-xl border border-[var(--line)] bg-white p-4">
@@ -1556,7 +2279,6 @@ function SchoolOnboardingPage() {
                     Full ({tasks.length})
                   </button>
                 </div>
-
               </div>
             </div>
           </div>
@@ -1602,12 +2324,12 @@ function SchoolOnboardingPage() {
             <div className="mb-1 flex flex-col gap-1 text-xs font-bold text-[var(--sea-ink)] sm:flex-row sm:justify-between">
               <span>Overall Completion</span>
               <span>
-                {isLoading ? 'Loading steps...' : `${completedCount} of ${totalCount} Steps (${progressPercent}%)`}
+                {isLoading || intakeLoading ? 'Loading steps...' : `${completedCount} of ${totalCount} Steps (${progressPercent}%)`}
               </span>
             </div>
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-neutral-200">
               <div
-                className="h-full bg-gradient-to-r from-[var(--vertex-blue)] to-[var(--vertex-gold)] transition-all duration-500"
+                className={`h-full bg-gradient-to-r from-[var(--vertex-blue)] to-[var(--vertex-gold)] transition-all duration-500 ${completionCelebration ? 'completion-progress-pulse' : ''}`}
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
@@ -1619,71 +2341,155 @@ function SchoolOnboardingPage() {
           </div>
         </div>
 
-        {showCompleteStage && allStepsComplete ? (
-          <div className="island-shell rounded-2xl overflow-hidden shadow-md">
-            <div className="bg-[var(--vertex-blue)] px-6 py-6 text-white">
-              <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-xl font-bold">
-                ✓
+        {!isLoading && showAttentionNotification && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex min-w-0 items-start gap-2">
+                <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                  <AlertTriangle size={14} aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-extrabold uppercase tracking-wide text-amber-800">
+                    Needs attention
+                  </div>
+                  <p className="mt-0.5 text-xs font-semibold leading-5 text-[var(--sea-ink-soft)]">
+                    Urgent items and tasks due within 7 days.
+                  </p>
+                </div>
               </div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
-                Onboarding Complete
-              </div>
-              <h2 className="display-title mt-1.5 text-2xl font-bold">
-                Congratulations, {contactName}.
-              </h2>
-              <p className="mt-2 max-w-2xl text-sm font-medium leading-5 text-white/85">
-                You have completed the onboarding journey for {clientName}. Your submissions have been received and are ready for Vertex review.
-              </p>
-            </div>
 
-            <div className="grid gap-5 p-5 md:grid-cols-[1.2fr_0.8fr] sm:p-6">
-              <div className="space-y-4">
-                <BrandedAlert variant="success" title="Your client journey is complete">
-                  Your Vertex client representatives will review the completed materials and reach out with next steps.
-                </BrandedAlert>
-
-                <div className="rounded-xl border border-[var(--line)] bg-neutral-50 p-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gray)]">
-                    What happens next
-                  </h3>
-                  <div className="mt-4 space-y-3">
-                    {[
-                      'Vertex reviews the submitted onboarding documents.',
-                      'Your client representatives coordinate any follow-up items.',
-                      'They reach out with next steps for the next phase of your journey.',
-                    ].map((item, index) => (
-                      <div key={item} className="flex gap-3">
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--vertex-blue)] text-[10px] font-bold text-white">
-                          {index + 1}
+              <div className="flex min-w-0 flex-1 items-start gap-2 lg:justify-end">
+                <div className="flex min-w-0 flex-1 flex-wrap gap-2 lg:justify-end">
+                  {visibleAttentionTasks.map((task) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => goToTask(task.id)}
+                      title={task.name}
+                      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-left text-xs font-bold text-[var(--sea-ink)] shadow-sm transition hover:border-amber-300 hover:bg-amber-50 sm:max-w-[18rem] lg:max-w-[22rem]"
+                    >
+                      {task.isUrgent ? (
+                        <AlertTriangle size={13} className="shrink-0 text-red-600" aria-hidden="true" />
+                      ) : (
+                        <Clock3 size={13} className="shrink-0 text-amber-700" aria-hidden="true" />
+                      )}
+                      <span className="block min-w-0 max-w-[9rem] flex-1 truncate sm:max-w-[12rem] lg:max-w-[14rem]">
+                        {task.name}
+                      </span>
+                      {task.dueDate && (
+                        <span className="shrink-0 whitespace-nowrap text-[10px] font-extrabold text-[var(--sea-ink-soft)]">
+                          Due {new Date(task.dueDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                         </span>
-                        <p className="pt-1 text-sm font-medium leading-5 text-[var(--sea-ink)]">
-                          {item}
-                        </p>
-                      </div>
-                    ))}
+                      )}
+                      {task.dueFlag && (
+                        <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wide ${getDueFlagClass(task.dueFlag)}`}>
+                          {getDueFlagLabel(task.dueFlag, task.daysUntilDue)}
+                        </span>
+                      )}
+                      {task.isUrgent && !task.dueFlag && (
+                        <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wide text-red-700">
+                          Urgent
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                  {hiddenAttentionTaskCount > 0 && (
+                    <span className="inline-flex items-center rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-extrabold uppercase tracking-wide text-amber-700">
+                      +{hiddenAttentionTaskCount} more
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDismissedAttentionKey(attentionNotificationKey)}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white text-amber-700 transition hover:bg-amber-100"
+                  aria-label="Dismiss attention notification"
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showCompleteStage && allStepsComplete ? (
+          <div className="completion-page island-shell overflow-hidden rounded-2xl border border-[rgba(0,56,101,0.16)] bg-white shadow-xl">
+            <div className="relative min-h-[24rem] overflow-hidden bg-[var(--vertex-blue)] text-white">
+              <img
+                src="/brand/vertex-onboarding-ascent.webp"
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 h-full w-full object-cover opacity-70"
+              />
+              <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,56,101,0.96)_0%,rgba(0,56,101,0.78)_44%,rgba(0,56,101,0.22)_100%)]" />
+              <div className="relative grid min-h-[24rem] content-end gap-5 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1.05fr)_24rem] lg:items-end lg:content-center">
+                <div className="max-w-3xl">
+                  <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
+                    Onboarding Complete
+                  </div>
+                  <h2 className="display-title mt-3 text-3xl font-bold leading-tight sm:text-5xl">
+                    You completed your onboarding journey.
+                  </h2>
+                  <p className="mt-4 max-w-2xl text-base font-semibold leading-7 text-white/90">
+                    Congratulations, {contactName}. {clientName} has completed every required onboarding step, and your submissions are ready for Vertex review.
+                  </p>
+                </div>
+
+                <div className="completion-summary-panel rounded-xl border border-white/20 bg-white/95 p-4 text-[var(--sea-ink)] shadow-2xl backdrop-blur">
+                  <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
+                    Completion Summary
+                  </div>
+                  <div className="mt-4 text-5xl font-extrabold leading-none text-[var(--vertex-blue)]">
+                    100%
+                  </div>
+                  <div className="mt-1 text-sm font-bold text-green-700">
+                    {completedCount} of {totalCount} steps complete
+                  </div>
+                  <div className="mt-5 space-y-3 border-t border-[var(--line)] pt-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-xs font-semibold text-[var(--sea-ink-soft)]">School</span>
+                      <span className="text-right text-xs font-bold text-[var(--sea-ink)]">{clientName}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-xs font-semibold text-[var(--sea-ink-soft)]">Journey status</span>
+                      <span className="rounded-full bg-green-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-green-700">
+                        Complete
+                      </span>
+                    </div>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="grid gap-5 p-5 md:grid-cols-[1.15fr_0.85fr] sm:p-6">
+              <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                <div className="text-xs font-bold uppercase tracking-wider text-green-700">
+                  Your client journey is complete
+                </div>
+                <p className="mt-2 text-sm font-semibold leading-6 text-[var(--sea-ink)]">
+                  Your Vertex client representatives will review the completed materials and reach out with next steps. You can return here any time to view your completed checklist and submitted progress.
+                </p>
               </div>
 
               <div className="rounded-xl border border-[var(--line)] bg-white p-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
-                  Completion Summary
-                </div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--vertex-gray)]">
+                  What happens next
+                </h3>
                 <div className="mt-4 space-y-3">
-                  <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
-                    <span className="text-xs font-semibold text-[var(--sea-ink-soft)]">Client</span>
-                    <span className="text-right text-xs font-bold text-[var(--sea-ink)]">{clientName}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
-                    <span className="text-xs font-semibold text-[var(--sea-ink-soft)]">Completed steps</span>
-                    <span className="text-xs font-bold text-green-700">{completedCount} of {totalCount}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-[var(--sea-ink-soft)]">Status</span>
-                    <span className="rounded-full bg-green-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-green-700">
-                      Complete
-                    </span>
-                  </div>
+                  {[
+                    'Vertex reviews the submitted onboarding documents.',
+                    'Your client representatives coordinate any follow-up items.',
+                    'They reach out with next steps for the next phase of your journey.',
+                  ].map((item, index) => (
+                    <div key={item} className="flex gap-3">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--vertex-blue)] text-[10px] font-bold text-white">
+                        {index + 1}
+                      </span>
+                      <p className="pt-1 text-sm font-medium leading-5 text-[var(--sea-ink)]">
+                        {item}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1830,6 +2636,132 @@ function SchoolOnboardingPage() {
               </BrandedAlert>
             )}
           </div>
+        ) : viewMode === 'journey' && activeIntakeStep ? (
+          <div className="island-shell overflow-hidden rounded-2xl shadow-md">
+            <div className="space-y-6 p-5 sm:p-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="mb-2 text-xs font-bold uppercase tracking-wider text-[var(--vertex-gold)]">
+                    Step {currentStepNumber}
+                  </div>
+                  <h2 className="display-title text-2xl font-bold text-[var(--vertex-blue)]">
+                    {activeIntakeStep.title}
+                  </h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--sea-ink-soft)]">
+                    {activeIntakeStep.prompt}
+                  </p>
+                </div>
+                {activeIntakeStep.helperText && (
+                  <div className="rounded-xl border border-[var(--chip-line)] bg-[var(--foam)] px-4 py-3 text-xs font-bold text-[var(--vertex-blue)] sm:max-w-56">
+                    {activeIntakeStep.helperText}
+                  </div>
+                )}
+              </div>
+
+              {activeIntakeStep.kind === 'rating' && activeIntakeStep.questions ? (
+                <div className="space-y-3">
+                  <div className="hidden grid-cols-[minmax(0,1fr)_repeat(5,3rem)] gap-2 px-3 text-center text-[10px] font-extrabold uppercase tracking-wide text-[var(--sea-ink-soft)] md:grid">
+                    <span className="text-left">Statement</span>
+                    {[1, 2, 3, 4, 5].map((rating) => (
+                      <span key={rating}>{rating}</span>
+                    ))}
+                  </div>
+
+                  {activeIntakeStep.questions.map((question) => {
+                    const stepResponse = intakeResponses[activeIntakeStep.id]
+                    const ratingResponse = typeof stepResponse === 'object' && stepResponse !== null && !Array.isArray(stepResponse)
+                      ? stepResponse
+                      : {}
+                    const selectedRating = ratingResponse[question.id]
+
+                    return (
+                      <fieldset
+                        key={question.id}
+                        className="rounded-xl border border-[var(--line)] bg-white p-3"
+                      >
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                          <legend className="text-sm font-bold leading-5 text-[var(--sea-ink)]">
+                            {question.label}
+                          </legend>
+                          <div className="grid grid-cols-5 gap-2 md:w-[15rem]">
+                            {[1, 2, 3, 4, 5].map((rating) => (
+                              <label
+                                key={rating}
+                                className={`flex min-h-11 cursor-pointer items-center justify-center rounded-lg border text-sm font-extrabold transition ${selectedRating === rating ? 'border-[var(--vertex-blue)] bg-[var(--vertex-blue)] text-white shadow-sm' : 'border-[var(--chip-line)] bg-[var(--foam)] text-[var(--sea-ink)] hover:border-[var(--vertex-blue)]'}`}
+                                title={`${rating}`}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`${activeIntakeStep.id}:${question.id}`}
+                                  value={rating}
+                                  checked={selectedRating === rating}
+                                  onChange={() => updateIntakeRating(activeIntakeStep.id, question.id, rating)}
+                                  className="sr-only"
+                                />
+                                {rating}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </fieldset>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-[var(--sea-ink)]" htmlFor={`intake-${activeIntakeStep.id}`}>
+                    Your response
+                  </label>
+                  <textarea
+                    id={`intake-${activeIntakeStep.id}`}
+                    value={typeof intakeResponses[activeIntakeStep.id] === 'string' ? (intakeResponses[activeIntakeStep.id] as string) : ''}
+                    onChange={(event) => updateIntakeText(activeIntakeStep.id, event.target.value)}
+                    rows={5}
+                    className="w-full rounded-xl border border-[var(--chip-line)] bg-white px-4 py-3 text-sm leading-6 text-[var(--sea-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--vertex-blue)]"
+                    placeholder={activeIntakeStep.placeholder || ''}
+                  />
+                </div>
+              )}
+
+              {intakeStatus && (
+                <BrandedAlert variant={intakeStatus.type} title={intakeStatus.title}>
+                  {intakeStatus.message}
+                </BrandedAlert>
+              )}
+
+              <div className="grid grid-cols-2 gap-3 border-t border-[var(--line)] pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeIntakeStepIndex === 0) {
+                      setShowProfileStep(true)
+                      setActiveIntakeStepIndex(null)
+                      saveResumeStep({ type: 'profile' })
+                    } else if (activeIntakeStepIndex !== null) {
+                      goToIntakeStep(activeIntakeStepIndex - 1)
+                    }
+                    resetOperationStatus()
+                  }}
+                  disabled={intakeSaving}
+                  className="rounded-lg border border-[var(--chip-line)] px-4 py-2 text-xs font-bold transition hover:bg-[var(--link-bg-hover)] disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={saveActiveIntakeStep}
+                  disabled={intakeSaving}
+                  className="rounded-lg border border-[var(--vertex-blue)] bg-[var(--vertex-blue)] px-4 py-2 text-xs font-bold text-white transition hover:bg-[var(--lagoon-deep)] disabled:opacity-50"
+                >
+                  {intakeSaving
+                    ? 'Saving...'
+                    : activeIntakeStepIndex === intakeSteps.length - 1
+                      ? 'Save & Continue to Tasks'
+                      : 'Save & Continue'}
+                </button>
+              </div>
+            </div>
+          </div>
         ) : viewMode === 'journey' ? (
           /* Wizard Journey Mode */
           <div className="island-shell rounded-2xl overflow-hidden shadow-md">
@@ -1840,8 +2772,15 @@ function SchoolOnboardingPage() {
                     {/* Tags */}
                     <div className="mb-2 flex flex-wrap gap-2">
                       {activeTask.isUrgent && (
-                        <span className="px-2.5 py-0.5 text-[9px] font-bold rounded-full bg-red-100 text-red-700 uppercase tracking-wide">
-                          🔴 URGENT (Payroll)
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-700">
+                          <AlertTriangle size={11} aria-hidden="true" />
+                          Urgent
+                        </span>
+                      )}
+                      {!activeTask.completed && activeTask.dueFlag && (
+                        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${getDueFlagClass(activeTask.dueFlag)}`}>
+                          <Clock3 size={11} aria-hidden="true" />
+                          {getDueFlagLabel(activeTask.dueFlag, activeTask.daysUntilDue)}
                         </span>
                       )}
                       <span className="px-2.5 py-0.5 text-[9px] font-bold rounded-full bg-blue-50 text-[var(--vertex-blue)] uppercase tracking-wide border border-blue-100">
@@ -1861,6 +2800,12 @@ function SchoolOnboardingPage() {
                     <span className={`text-xs font-semibold ${activeTask.dueDate ? 'text-[var(--sea-ink)]' : 'text-neutral-400 italic'}`}>
                       {activeTask.dueDate ? new Date(activeTask.dueDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'No due date set'}
                     </span>
+                    {!activeTask.completed && activeTask.dueFlag && (
+                      <span className={`mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide ${getDueFlagClass(activeTask.dueFlag)}`}>
+                        <Clock3 size={10} aria-hidden="true" />
+                        {getDueFlagLabel(activeTask.dueFlag, activeTask.daysUntilDue)}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -2080,8 +3025,15 @@ function SchoolOnboardingPage() {
                   <button
                     onClick={() => {
                       if (activeTaskIndex === 0) {
-                        setShowProfileStep(true)
-                        saveResumeStep({ type: 'profile' })
+                        if (intakeSteps.length > 0) {
+                          const previousIntakeIndex = intakeSteps.length - 1
+                          setActiveIntakeStepIndex(previousIntakeIndex)
+                          setShowProfileStep(false)
+                          saveResumeStep({ type: 'intake', intakeStepId: intakeSteps[previousIntakeIndex].id })
+                        } else {
+                          setShowProfileStep(true)
+                          saveResumeStep({ type: 'profile' })
+                        }
                         resetOperationStatus()
                       } else {
                         const previousTaskIndex = activeTaskIndex - 1
@@ -2126,6 +3078,7 @@ function SchoolOnboardingPage() {
               <div
                 onClick={() => {
                   setShowProfileStep(true)
+                  setActiveIntakeStepIndex(null)
                   setViewMode('journey')
                   setShowCompleteStage(false)
                   saveResumeStep({ type: 'profile' })
@@ -2146,6 +3099,34 @@ function SchoolOnboardingPage() {
                 </span>
               </div>
 
+              {intakeSteps.map((step, index) => {
+                const isComplete = completedIntakeStepIds.includes(step.id) && isIntakeStepComplete(step, intakeResponses)
+
+                return (
+                  <div
+                    key={step.id}
+                    onClick={() => goToIntakeStep(index)}
+                    className="flex cursor-pointer flex-col gap-2 rounded-lg px-2 py-3.5 transition hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${isComplete ? 'bg-green-100 text-green-700' : 'border border-neutral-300 text-neutral-400'}`}>
+                        {isComplete ? '✓' : index + profileStepCount + 1}
+                      </span>
+                      <div className="min-w-0 text-sm font-bold text-[var(--sea-ink)]">
+                        {step.title}
+                        <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-[var(--sea-ink-soft)]">
+                          {step.kind === 'rating' ? 'Readiness ratings' : 'Open response'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <span className={`text-xs font-semibold ${isComplete ? 'text-green-700' : 'text-[var(--sea-ink-soft)]'}`}>
+                      Step {index + profileStepCount + 1}
+                    </span>
+                  </div>
+                )
+              })}
+
               {displayedTasks.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-[var(--chip-line)] bg-white p-5 text-sm font-semibold text-[var(--sea-ink-soft)]">
                   No tasks are assigned to you yet. Switch to Full Journey to review the full onboarding process.
@@ -2160,6 +3141,7 @@ function SchoolOnboardingPage() {
                     key={task.id}
                     onClick={() => {
                       setActiveTaskIndex(idx)
+                      setActiveIntakeStepIndex(null)
                       setShowProfileStep(false)
                       setViewMode('journey')
                       saveResumeStep({ type: 'task', taskId: task.id })
@@ -2174,7 +3156,7 @@ function SchoolOnboardingPage() {
                           </span>
                         ) : taskActionable ? (
                           <span className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 text-neutral-400 font-bold text-xs">
-                            {idx + profileStepCount + 1}
+                            {idx + asanaStepOffset + 1}
                           </span>
                         ) : (
                           <span className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-200 bg-neutral-50 text-neutral-400">
@@ -2184,8 +3166,15 @@ function SchoolOnboardingPage() {
                         <div className="min-w-0 text-sm font-bold text-[var(--sea-ink)]">
                           {task.name}
                           {task.isUrgent && (
-                            <span className="ml-2 px-2 py-0.5 text-[8px] rounded-full bg-red-100 text-red-600 uppercase font-extrabold tracking-wide">
+                            <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[8px] font-extrabold uppercase tracking-wide text-red-600">
+                              <AlertTriangle size={10} aria-hidden="true" />
                               Urgent
+                            </span>
+                          )}
+                          {!task.completed && task.dueFlag && (
+                            <span className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[8px] font-extrabold uppercase tracking-wide ${getDueFlagClass(task.dueFlag)}`}>
+                              <Clock3 size={10} aria-hidden="true" />
+                              {getDueFlagLabel(task.dueFlag, task.daysUntilDue)}
                             </span>
                           )}
                           {assignment && (
@@ -2200,6 +3189,12 @@ function SchoolOnboardingPage() {
                         <span className={`text-xs font-semibold ${task.dueDate ? 'text-[var(--sea-ink-soft)]' : 'text-neutral-300 italic'}`}>
                           {task.dueDate ? new Date(task.dueDate).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'No due date'}
                         </span>
+                        {!task.completed && task.dueFlag && (
+                          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[8px] font-extrabold uppercase tracking-wide ${getDueFlagClass(task.dueFlag)}`}>
+                            <Clock3 size={10} aria-hidden="true" />
+                            {getDueFlagLabel(task.dueFlag, task.daysUntilDue)}
+                          </span>
+                        )}
                         {canAssignTasks && schoolContacts.length > 0 && (
                           <button
                             type="button"
@@ -2249,30 +3244,46 @@ function SchoolOnboardingPage() {
       </section>
 
       {/* VertexAI chatbot panel */}
-      <div className="fixed inset-x-2 bottom-[5.75rem] z-50 flex flex-col items-end gap-3 sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[390px]">
+      <div className={isChatOpen
+        ? 'fixed inset-x-2 bottom-[5.75rem] z-50 flex flex-col items-end gap-3 sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[390px]'
+        : 'fixed right-0 bottom-28 z-50 hidden md:block'
+      }>
         {!isChatOpen && (
           <button
             type="button"
             onClick={() => setIsChatOpen(true)}
-            className="hidden items-center justify-center gap-2 rounded-full border border-[var(--vertex-blue)] bg-white px-4 py-3 text-xs font-bold text-[var(--vertex-blue)] shadow-2xl transition hover:bg-[var(--foam)] md:inline-flex"
-            aria-label="Open VertexAI onboarding helper"
+            className={`relative inline-flex min-h-32 w-12 items-center justify-center gap-2 rounded-l-xl border border-r-0 py-4 text-sm font-bold shadow-2xl transition-transform duration-200 hover:-translate-x-1 focus-visible:-translate-x-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vertex-blue)] focus-visible:ring-offset-2 ${hasUnreadTeamMessages ? 'border-[var(--vertex-gold)] bg-amber-50 text-amber-900 ring-2 ring-[var(--vertex-gold)] ring-offset-2' : 'border-[var(--vertex-blue)] bg-white text-[var(--vertex-blue)]'}`}
+            aria-label="Open help chat"
           >
-            <Sparkles size={16} className="text-[var(--vertex-gold)]" aria-hidden="true" />
-            <span>VertexAI</span>
+            <span className="flex rotate-180 items-center gap-2 [writing-mode:vertical-rl]">
+              <Sparkles size={16} className="text-[var(--vertex-gold)]" aria-hidden="true" />
+              <span>Get Help</span>
+              {hasUnreadTeamMessages && (
+                <span className="rounded-full bg-[var(--vertex-gold)] px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
+                  New
+                </span>
+              )}
+            </span>
+            {hasUnreadTeamMessages && (
+              <span className="absolute -left-3 top-2 inline-flex min-w-7 items-center justify-center rounded-full bg-red-600 px-2 py-1 text-[10px] font-black text-white shadow-lg ring-2 ring-white">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--vertex-gold)] opacity-55" aria-hidden="true" />
+                <span className="relative">{staffUnreadCount}</span>
+              </span>
+            )}
           </button>
         )}
 
         {isChatOpen && (
-          <aside className="flex h-[min(620px,calc(100vh-6rem))] w-full flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-2xl sm:h-[min(620px,calc(100vh-7.5rem))]">
+          <aside className="chat-popout-enter flex h-[min(620px,calc(100vh-6rem))] w-full flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-2xl sm:h-[min(620px,calc(100vh-7.5rem))]">
             {/* Chat Header */}
             <div className="bg-[var(--vertex-blue)] text-white p-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Sparkles size={18} className="text-[var(--vertex-gold)]" aria-hidden="true" />
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold font-display tracking-wide">VertexAI</span>
-                  <span className="text-[9px] tracking-wider text-white/70 font-semibold uppercase leading-none">onboarding helper</span>
-                </div>
-              </div>
+	                <Sparkles size={18} className="text-[var(--vertex-gold)]" aria-hidden="true" />
+	                <div className="flex flex-col">
+	                  <span className="text-sm font-bold font-display tracking-wide">Vertex Chat</span>
+	                  <span className="text-[9px] tracking-wider text-white/70 font-semibold uppercase leading-none">AI helper + team messages</span>
+	                </div>
+	              </div>
               <button
                 type="button"
                 onClick={() => setIsChatOpen(false)}
@@ -2283,63 +3294,128 @@ function SchoolOnboardingPage() {
               </button>
             </div>
 
-            {/* AI Guardrail disclaimer */}
-            <div className="border-b border-[var(--line)] bg-white px-3 py-2">
-              <BrandedAlert variant="warning" title="NOTE">
-                I can explain onboarding steps, but not legal, financial, tax, payroll, compliance, or contract advice.
-              </BrandedAlert>
-            </div>
+	            <div className="grid grid-cols-2 gap-1 border-b border-[var(--line)] bg-[var(--foam)] p-1 text-xs font-bold">
+	              {[
+	                ['ai', 'VertexAI', aiUnreadCount],
+	                ['staff', 'Vertex Team', staffUnreadCount],
+	              ].map(([tab, label, unread]) => (
+	                <button
+	                  key={tab as string}
+	                  type="button"
+	                  onClick={() => {
+	                    setActiveChatTab(tab as ChatTab)
+	                    setChatError('')
+	                  }}
+	                  className={`rounded-lg px-3 py-2 transition ${activeChatTab === tab ? 'bg-white text-[var(--vertex-blue)] shadow-sm' : 'text-[var(--sea-ink-soft)] hover:text-[var(--sea-ink)]'}`}
+	                >
+	                  {label as string}
+	                  {Number(unread) > 0 && (
+	                    <span className="ml-2 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--vertex-gold)] px-1.5 py-0.5 text-[9px] font-black text-white">
+	                      {Number(unread)}
+	                    </span>
+	                  )}
+	                </button>
+	              ))}
+	            </div>
 
-            {/* Chat History Container */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[var(--foam)]">
-              {chatHistory.map((msg, index) => (
-                <div
-                  key={index}
-                  className={`flex flex-col max-w-[85%] ${msg.sender === 'user' ? 'ml-auto items-end' : 'items-start'}`}
-                >
-                  <div
-                    className={`p-3 rounded-2xl text-xs leading-relaxed ${msg.sender === 'user' ? 'bg-[var(--vertex-blue)] text-white rounded-br-none' : 'bg-white text-[var(--sea-ink)] border border-[var(--line)] rounded-bl-none shadow-xxs'}`}
-                  >
-                    {renderChatMarkdown(msg.text)}
-                  </div>
-                  <span className="text-[9px] text-[var(--sea-ink-soft)] font-semibold mt-1 px-1">
-                    {msg.timestamp}
-                    {msg.sender === 'ai' && getModelBadge(msg) && (
-                      <span className={`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 uppercase tracking-wide ${getModelBadge(msg)?.className}`}>
-                        {getModelBadge(msg)?.label}
-                        {msg.model === '@cf/google/gemma-4-26b-a4b-it' && <AiDisclosure className="h-4 w-4" />}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              ))}
-              {aiLoading && (
-                <div className="flex items-center gap-2 bg-white/75 p-3 rounded-2xl border border-[var(--line)] max-w-[50%] animate-pulse">
-                  <div className="flex gap-1">
+	            {/* Chat notice */}
+		            <div className="border-b border-[var(--line)] bg-white px-3 py-2">
+		              <BrandedAlert variant="warning" title="NOTE">
+		                {activeChatTab === 'ai'
+		                  ? 'I can explain onboarding steps, but not legal, financial, tax, payroll, compliance, or contract advice.'
+		                  : 'Messages here go to the Vertex onboarding team. Do not include bank account, payroll, or other sensitive document details.'}
+		              </BrandedAlert>
+		            </div>
+
+	            {hasUnreadTeamMessages && activeChatTab !== 'staff' && (
+	              <button
+	                type="button"
+	                onClick={() => {
+	                  setActiveChatTab('staff')
+	                  setChatError('')
+	                }}
+	                className="flex items-center justify-between gap-3 border-b border-amber-300 bg-amber-100 px-3 py-3 text-left text-sm font-black text-amber-950 shadow-inner transition hover:bg-amber-200"
+	              >
+	                <span>
+	                  New message from the Vertex Team
+	                  <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
+	                    {staffUnreadCount}
+	                  </span>
+	                </span>
+	                <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-900">View</span>
+	              </button>
+	            )}
+
+	            {/* Chat History Container */}
+	            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[var(--foam)]">
+	              {activeChatLoading ? (
+	                <div className="rounded-2xl border border-[var(--line)] bg-white p-3 text-xs font-semibold text-[var(--sea-ink-soft)]">
+	                  Loading conversation...
+	                </div>
+	              ) : activeChatMessages.length === 0 ? (
+	                <div className="rounded-2xl border border-[var(--line)] bg-white p-3 text-xs leading-relaxed text-[var(--sea-ink)] shadow-xxs">
+	                  {activeChatTab === 'ai'
+	                    ? 'Hi! I am your Vertex onboarding assistant. I can help explain the required SFO onboarding documents, answer FAQs, and guide you on what to do next.'
+	                    : 'Send a message to the Vertex onboarding team. Replies will appear here and stay with this school workspace.'}
+	                </div>
+	              ) : activeChatMessages.map((msg) => {
+	                const isMine = msg.senderUserId === session?.user?.id
+	                const label = msg.senderType === 'ai' ? 'VertexAI' : msg.senderName || msg.senderEmail || (msg.senderType === 'staff' ? 'Vertex Team' : 'Client')
+	                const modelBadge = msg.senderType === 'ai' ? getModelBadge(msg) : null
+	                return (
+	                  <div
+	                    key={msg.id}
+	                    className={`flex flex-col max-w-[85%] ${isMine ? 'ml-auto items-end' : 'items-start'}`}
+	                  >
+	                    <div
+	                      className={`p-3 rounded-2xl text-xs leading-relaxed ${isMine ? 'bg-[var(--vertex-blue)] text-white rounded-br-none' : 'bg-white text-[var(--sea-ink)] border border-[var(--line)] rounded-bl-none shadow-xxs'}`}
+	                    >
+	                      {renderChatMarkdown(msg.body)}
+	                    </div>
+	                    <span className="text-[9px] text-[var(--sea-ink-soft)] font-semibold mt-1 px-1">
+	                      {label} · {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+	                      {modelBadge && (
+	                        <span className={`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 uppercase tracking-wide ${modelBadge.className}`}>
+	                          {modelBadge.label}
+	                          {msg.aiModel === '@cf/google/gemma-4-26b-a4b-it' && <AiDisclosure className="h-4 w-4" />}
+	                        </span>
+	                      )}
+	                    </span>
+	                  </div>
+	                )
+	              })}
+	              {(aiLoading || teamSending) && (
+	                <div className="flex items-center gap-2 bg-white/75 p-3 rounded-2xl border border-[var(--line)] max-w-[50%] animate-pulse">
+	                  <div className="flex gap-1">
                     <div className="h-1.5 w-1.5 bg-[var(--vertex-blue)] rounded-full animate-bounce" />
                     <div className="h-1.5 w-1.5 bg-[var(--vertex-blue)] rounded-full animate-bounce [animation-delay:0.2s]" />
                     <div className="h-1.5 w-1.5 bg-[var(--vertex-blue)] rounded-full animate-bounce [animation-delay:0.4s]" />
                   </div>
-                </div>
-              )}
-              <div ref={chatBottomRef} />
-            </div>
+	                </div>
+	              )}
+	              {chatError && (
+	                <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">
+	                  {chatError}
+	                </div>
+	              )}
+	              <div ref={chatBottomRef} />
+	            </div>
 
-            {/* Chat input box */}
-            <form onSubmit={handleSendChat} className="p-3 border-t border-[var(--line)] bg-white flex gap-2">
+	            {/* Chat input box */}
+	            <form onSubmit={handleSendChat} className="p-3 border-t border-[var(--line)] bg-white flex gap-2">
               <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Ask VertexAI a question..."
-                className="min-w-0 flex-1 rounded-xl border border-[var(--chip-line)] bg-neutral-50 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[var(--vertex-blue)]"
-              />
-              <button
-                type="submit"
-                disabled={aiLoading || !chatInput.trim()}
-                className="p-2 bg-[var(--vertex-blue)] hover:bg-[var(--lagoon-deep)] text-white rounded-xl disabled:opacity-45 cursor-pointer transition flex items-center justify-center"
-                aria-label="Send message to VertexAI"
-              >
+	                type="text"
+	                value={chatInput}
+	                onChange={(e) => setChatInput(e.target.value)}
+	                placeholder={activeChatTab === 'ai' ? 'Ask VertexAI a question...' : 'Message the Vertex Team...'}
+	                className="min-w-0 flex-1 rounded-xl border border-[var(--chip-line)] bg-neutral-50 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[var(--vertex-blue)]"
+	              />
+	              <button
+	                type="submit"
+	                disabled={aiLoading || teamSending || !chatInput.trim()}
+	                className="p-2 bg-[var(--vertex-blue)] hover:bg-[var(--lagoon-deep)] text-white rounded-xl disabled:opacity-45 cursor-pointer transition flex items-center justify-center"
+	                aria-label={activeChatTab === 'ai' ? 'Send message to VertexAI' : 'Send message to Vertex Team'}
+	              >
                 <Send size={16} aria-hidden="true" />
               </button>
             </form>

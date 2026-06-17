@@ -11,9 +11,47 @@ export type OnboardingTask = {
   dueDate: string | null
   completed: boolean
   isUrgent: boolean
+  dueFlag: 'overdue' | 'today' | 'soon' | null
+  daysUntilDue: number | null
   functionalArea: string
   requiresFileUpload: boolean
   fileRequirementReason: string
+}
+
+const dueSoonWindowDays = 7
+
+function getDueDateFlag(dueDate: string | null | undefined): Pick<OnboardingTask, 'dueFlag' | 'daysUntilDue'> {
+  if (!dueDate) {
+    return { dueFlag: null, daysUntilDue: null }
+  }
+
+  const parsedDueDate = new Date(`${dueDate}T00:00:00`)
+  if (Number.isNaN(parsedDueDate.getTime())) {
+    return { dueFlag: null, daysUntilDue: null }
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const daysUntilDue = Math.ceil((parsedDueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+
+  if (daysUntilDue < 0) return { dueFlag: 'overdue', daysUntilDue }
+  if (daysUntilDue === 0) return { dueFlag: 'today', daysUntilDue }
+  if (daysUntilDue <= dueSoonWindowDays) return { dueFlag: 'soon', daysUntilDue }
+  return { dueFlag: null, daysUntilDue }
+}
+
+function withTaskVisibilityFlags(task: Omit<OnboardingTask, 'dueFlag' | 'daysUntilDue'>): OnboardingTask {
+  return {
+    ...task,
+    ...getDueDateFlag(task.dueDate),
+  }
+}
+
+function refreshTaskVisibilityFlags(task: OnboardingTask): OnboardingTask {
+  return {
+    ...task,
+    ...getDueDateFlag(task.dueDate),
+  }
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -482,7 +520,7 @@ async function fetchAsanaTaskDetails(token: string, tasks: any[], optFields: str
 
 // Fallback static tasks from context/recommended-sfo-tasks.md
 export const FALLBACK_TASKS: OnboardingTask[] = [
-  {
+  withTaskVisibilityFlags({
     id: 'mock-task-1',
     name: 'Upload 501c3 letter or EIN documentation',
     notes: 'If no 501c3 letter is available, EIN/business-name documentation may be used for the demo.',
@@ -492,8 +530,8 @@ export const FALLBACK_TASKS: OnboardingTask[] = [
     functionalArea: 'URGENT (Payroll)',
     requiresFileUpload: true,
     fileRequirementReason: 'The task asks for 501c3 or EIN documentation.',
-  },
-  {
+  }),
+  withTaskVisibilityFlags({
     id: 'mock-task-2',
     name: 'Upload voided checks for all bank accounts',
     notes: 'If no check stock is available, a bank letter with routing and account numbers may be referenced in task instructions.',
@@ -503,8 +541,8 @@ export const FALLBACK_TASKS: OnboardingTask[] = [
     functionalArea: 'URGENT (Payroll)',
     requiresFileUpload: true,
     fileRequirementReason: 'The task asks for bank account documentation.',
-  },
-  {
+  }),
+  withTaskVisibilityFlags({
     id: 'mock-task-3',
     name: 'Upload latest payroll register with YTD info',
     notes: 'Please upload the payroll register showing year-to-date earnings and taxes for all employees.',
@@ -514,8 +552,8 @@ export const FALLBACK_TASKS: OnboardingTask[] = [
     functionalArea: 'URGENT (Payroll)',
     requiresFileUpload: true,
     fileRequirementReason: 'The task asks for a payroll register file.',
-  },
-  {
+  }),
+  withTaskVisibilityFlags({
     id: 'mock-task-4',
     name: 'Upload board-approved current year budget in Excel',
     notes: 'Please upload the spreadsheet file containing the current fiscal year budget approved by the school board.',
@@ -525,8 +563,8 @@ export const FALLBACK_TASKS: OnboardingTask[] = [
     functionalArea: 'Accounting',
     requiresFileUpload: true,
     fileRequirementReason: 'The task asks for an Excel budget file.',
-  },
-  {
+  }),
+  withTaskVisibilityFlags({
     id: 'mock-task-5',
     name: 'Upload preliminary deposits/expenses, General Ledger detail, and Trial Balance Report',
     notes: 'Upload your preliminary list of all deposits and expenses to date, general ledger details, and Trial Balance Report. This helps our SFO team set up your accounting system.',
@@ -536,7 +574,7 @@ export const FALLBACK_TASKS: OnboardingTask[] = [
     functionalArea: 'Accounting',
     requiresFileUpload: true,
     fileRequirementReason: 'The task asks for accounting report files.',
-  }
+  }),
 ]
 
 // Helper function to sort tasks by due date
@@ -940,8 +978,8 @@ export const getOnboardingTasks = createServerFn({ method: 'GET' })
     if (!asanaPat) {
       // Return static tasks with completed status from DB
       const tasks = FALLBACK_TASKS.map(task => ({
-        ...task,
-        completed: completedTaskIds.has(task.id)
+        ...refreshTaskVisibilityFlags(task),
+        completed: completedTaskIds.has(task.id),
       }))
       await storeSchoolOnboardingTaskStates(db, schoolOnboardingTaskStates, {
         schoolName,
@@ -964,8 +1002,8 @@ export const getOnboardingTasks = createServerFn({ method: 'GET' })
       if (!projectGid) {
         // Fall back if project doesn't exist
         const tasks = FALLBACK_TASKS.map(task => ({
-          ...task,
-          completed: completedTaskIds.has(task.id)
+          ...refreshTaskVisibilityFlags(task),
+          completed: completedTaskIds.has(task.id),
         }))
         await storeSchoolOnboardingTaskStates(db, schoolOnboardingTaskStates, {
           schoolName,
@@ -1070,11 +1108,11 @@ export const getOnboardingTasks = createServerFn({ method: 'GET' })
       const fileRequirementsById = new Map(fileRequirements.map((requirement) => [requirement.id, requirement]))
       const rawTasks: OnboardingTask[] = baseTasks.map((task) => {
         const requirement = fileRequirementsById.get(task.id)
-        return {
+        return withTaskVisibilityFlags({
           ...task,
           requiresFileUpload: requirement?.requiresFileUpload ?? true,
           fileRequirementReason: requirement?.reason || 'The task was classified from its name and instructions.',
-        }
+        })
       })
       await storeSchoolOnboardingTaskStates(db, schoolOnboardingTaskStates, {
         schoolName,
@@ -1093,8 +1131,8 @@ export const getOnboardingTasks = createServerFn({ method: 'GET' })
     } catch (err) {
       console.error('Failed to fetch from Asana, using mock fallbacks:', err)
       const tasks = FALLBACK_TASKS.map(task => ({
-        ...task,
-        completed: completedTaskIds.has(task.id)
+        ...refreshTaskVisibilityFlags(task),
+        completed: completedTaskIds.has(task.id),
       }))
       await storeSchoolOnboardingTaskStates(db, schoolOnboardingTaskStates, {
         schoolName,
