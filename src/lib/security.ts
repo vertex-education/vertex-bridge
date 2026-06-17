@@ -1,4 +1,3 @@
-import { getRequest } from '@tanstack/start-server-core'
 import { and, eq } from 'drizzle-orm'
 
 export type AppSession = NonNullable<Awaited<ReturnType<typeof getCurrentSession>>>
@@ -16,18 +15,24 @@ function getAllowedOrigins(request: Request) {
   ])
 }
 
-export function assertTrustedOrigin(request = getRequest()) {
-  const origin = request.headers.get('origin')
+export async function getServerRequest() {
+  const { getRequest } = await import('@tanstack/start-server-core')
+  return getRequest()
+}
+
+export async function assertTrustedOrigin(request?: Request) {
+  const currentRequest = request ?? await getServerRequest()
+  const origin = currentRequest.headers.get('origin')
   if (!origin) return
 
-  if (!getAllowedOrigins(request).has(origin)) {
+  if (!getAllowedOrigins(currentRequest).has(origin)) {
     throw new Error('Unauthorized request origin.')
   }
 }
 
 export async function getCurrentSession() {
   const { auth } = await import('#/lib/auth')
-  const request = getRequest()
+  const request = await getServerRequest()
   const session = await auth.api.getSession({
     headers: request.headers,
   })

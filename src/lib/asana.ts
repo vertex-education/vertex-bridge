@@ -1,7 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import { eq } from 'drizzle-orm'
-import { assertCanAccessSchool, assertTrustedOrigin, requireSession, requireStaffSession } from './security'
+import { assertCanAccessSchool, assertTrustedOrigin, getServerRequest, requireSession, requireStaffSession } from './security'
 import { clientTypesMatch, getAllowedTaskClientTypes, normalizeClientType } from './client-types'
 import { classifyTaskFileRequirements, deterministicTaskFileRequirement, type TaskFileRequirement } from './ai'
 
@@ -554,7 +553,7 @@ export function sortTasks(tasks: OnboardingTask[]): OnboardingTask[] {
 
 async function getAsanaPat() {
   const { getAsanaBearerToken } = await import('./asana-oauth.server')
-  return await getAsanaBearerToken(getRequest())
+  return await getAsanaBearerToken(await getServerRequest())
 }
 
 async function getAsanaProjectConfig() {
@@ -800,7 +799,7 @@ async function ensureAsanaProjectForSchool(token: string, schoolName: string) {
 
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'system',
       category: 'asana',
       action: 'school_asana_project_creation_started',
@@ -1115,7 +1114,7 @@ export const getOnboardingTasks = createServerFn({ method: 'GET' })
 
 export const seedOnboardingProgressCache = createServerFn({ method: 'POST' })
   .handler(async () => {
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireStaffSession()
     const { db } = await import('#/db')
     const { clientProfiles, invitations, schoolAsanaProjects } = await import('#/db/schema')
@@ -1155,7 +1154,7 @@ export const seedOnboardingProgressCache = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('./audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'vertex',
       category: 'asana',
       action: 'onboarding_progress_cache_seeded',
@@ -1182,7 +1181,7 @@ async function markAsanaTaskComplete(data: {
   commentText: string
 }) {
     const { getAsanaBearerToken } = await import('./asana-oauth.server')
-    const asanaPat = await getAsanaBearerToken(getRequest())
+    const asanaPat = await getAsanaBearerToken(await getServerRequest())
 
     if (!asanaPat || data.taskId.startsWith('mock-')) {
       return { success: true, mock: true }
@@ -1264,7 +1263,7 @@ export const completeOnboardingTaskManually = createServerFn({ method: 'POST' })
     schoolName: string
   }) => data)
   .handler(async ({ data }) => {
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireSession()
     await assertCanAccessSchool(session, data.schoolName)
 
@@ -1291,7 +1290,7 @@ export const completeOnboardingTaskManually = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('./audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'client',
       category: 'asana',
       action: result.success ? 'step_completed_manually' : 'step_manual_completion_failed',

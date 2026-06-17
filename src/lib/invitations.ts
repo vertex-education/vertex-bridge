@@ -1,7 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import { asc, desc, eq, sql } from 'drizzle-orm'
-import { assertTrustedOrigin } from './security'
+import { assertTrustedOrigin, getServerRequest } from './security'
 import type { AppSession } from './security'
 
 function escapeHtml(value: string) {
@@ -27,7 +26,7 @@ async function getEnv() {
 
 async function requireAdminSession() {
   const { auth } = await import('#/lib/auth')
-  const request = getRequest()
+  const request = await getServerRequest()
   const session = await auth.api.getSession({
     headers: request.headers,
   })
@@ -175,7 +174,7 @@ export const sendInvite = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { clientProfiles, invitations } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireAdminSession()
     
     const token = crypto.randomUUID()
@@ -281,7 +280,7 @@ export const sendInvite = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('./audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'admin',
       category: 'invite',
       action: emailSent ? 'invite_sent' : 'invite_created',
@@ -327,7 +326,7 @@ export const revokeInvite = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { invitations } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireAdminSession()
 
     const results = await db.select().from(invitations).where(eq(invitations.id, id)).all()
@@ -346,7 +345,7 @@ export const revokeInvite = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('./audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'admin',
       category: 'invite',
       action: 'invite_revoked',
@@ -399,9 +398,9 @@ export const acceptInviteForCurrentUser = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { invitations, user } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
 
-    const request = getRequest()
+    const request = await getServerRequest()
     const session = await auth.api.getSession({
       headers: request.headers,
     })
@@ -472,7 +471,7 @@ export const acceptInvite = createServerFn({ method: 'POST' })
     const { hashPassword } = await import('@better-auth/utils/password')
     const { and } = await import('drizzle-orm')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
 
     const password = data.password?.trim()
     if (!password || password.length < 6) {
@@ -576,7 +575,7 @@ export const acceptInvite = createServerFn({ method: 'POST' })
           role: invite.role,
         },
       } as AppSession,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: invite.role === 'school_user' ? 'client' : 'vertex',
       category: 'invite',
       action: 'invite_accepted_new_account',
@@ -608,7 +607,7 @@ export const resetInviteAccountPassword = createServerFn({ method: 'POST' })
     const { hashPassword } = await import('@better-auth/utils/password')
     const { and } = await import('drizzle-orm')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
 
     const password = data.password.trim()
     if (password.length < 6) {
@@ -690,7 +689,7 @@ export const resetInviteAccountPassword = createServerFn({ method: 'POST' })
           role: invite.role,
         },
       } as AppSession,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: invite.role === 'school_user' ? 'client' : 'vertex',
       category: 'account',
       action: 'invite_password_reset',

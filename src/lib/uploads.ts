@@ -1,9 +1,9 @@
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import { completeAsanaTask } from './asana'
 import { eq } from 'drizzle-orm'
 import {
   assertCanAccessSchool,
+  getServerRequest,
   assertTrustedOrigin,
   requireSession,
   requireStaffSession,
@@ -162,7 +162,7 @@ export const uploadOnboardingFile = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { submissions } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireSession()
 
     const currentUser = session.user
@@ -256,7 +256,7 @@ export const uploadOnboardingFile = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('./audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'client',
       category: 'upload',
       action: 'file_uploaded',
@@ -275,7 +275,7 @@ export const uploadOnboardingFile = createServerFn({ method: 'POST' })
     })
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'client',
       category: 'asana',
       action: asanaResult.success ? 'step_completed_asana_validated' : 'step_completion_asana_failed',
@@ -309,7 +309,7 @@ export const reviewSubmission = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { submissions } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireStaffSession()
 
     const rows = await db.select().from(submissions).where(eq(submissions.id, submissionId)).all()
@@ -324,7 +324,7 @@ export const reviewSubmission = createServerFn({ method: 'POST' })
       const { recordAuditEvent } = await import('./audit')
       await recordAuditEvent({
         session,
-        request: getRequest(),
+        request: await getServerRequest(),
         surface: 'vertex',
         category: 'review',
         action: 'file_reviewed',
@@ -355,7 +355,7 @@ export const sendNudgeEmail = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { submissions } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireStaffSession()
 
     const recipient = await resolveSchoolNudgeRecipient(data.schoolName)
@@ -381,7 +381,7 @@ export const sendNudgeEmail = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('./audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'vertex',
       category: 'notification',
       action: emailSent ? 'nudge_sent' : 'nudge_recorded',

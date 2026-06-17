@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ExternalLink, Send, Sparkles, X } from 'lucide-react'
@@ -9,6 +8,7 @@ import { completeOnboardingTaskManually, getOnboardingTasks } from '#/lib/asana'
 import { uploadOnboardingFile } from '#/lib/uploads'
 import { AiDisclosure } from '#/components/AiDisclosure'
 import { BrandedAlert } from '#/components/BrandedAlert'
+import { getServerRequest } from '#/lib/security'
 
 export const Route = createFileRoute('/school-onboarding')({
   component: SchoolOnboardingPage,
@@ -60,7 +60,7 @@ const reportContractDiscrepancy = createServerFn({ method: 'POST' })
     const { getCloudflareEnv } = await import('#/lib/cloudflare-env.server')
     const env = getCloudflareEnv()
 
-    const request = getRequest()
+    const request = await getServerRequest()
     const session = await auth.api.getSession({
       headers: request.headers,
     })
@@ -189,7 +189,7 @@ const listCurrentUserSchoolProfiles = createServerFn({ method: 'GET' })
     const { clientProfiles, invitations } = await import('#/db/schema')
     const { asc, eq } = await import('drizzle-orm')
 
-    const request = getRequest()
+    const request = await getServerRequest()
     const session = await auth.api.getSession({
       headers: request.headers,
     })

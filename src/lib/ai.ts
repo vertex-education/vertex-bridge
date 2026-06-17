@@ -671,7 +671,7 @@ export async function getAIHelperResponse(data: AskAIHelperInput) {
 export const askAIHelper = createServerFn({ method: 'POST' })
   .validator((data: AskAIHelperInput) => data)
   .handler(async ({ data }) => {
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     await requireSession()
     const response = await getAIHelperResponse(data)
     return {

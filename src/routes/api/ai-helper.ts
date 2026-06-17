@@ -30,7 +30,7 @@ export const Route = createFileRoute('/api/ai-helper')({
     handlers: {
       POST: async ({ request }) => {
         try {
-          assertTrustedOrigin(request)
+          await assertTrustedOrigin(request)
           const { auth } = await import('#/lib/auth')
           const session = await auth.api.getSession({
             headers: request.headers,

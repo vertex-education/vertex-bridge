@@ -1,15 +1,15 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listInvites, listInviteSchools, revokeInvite, sendInvite } from '#/lib/invitations'
 import { BrandedAlert } from '#/components/BrandedAlert'
+import { getServerRequest } from '#/lib/security'
 
 const getAdminAccess = createServerFn({ method: 'GET' }).handler(async () => {
   const { auth } = await import('#/lib/auth')
-  const request = getRequest()
+  const request = await getServerRequest()
   const session = await auth.api.getSession({
     headers: request.headers,
   })

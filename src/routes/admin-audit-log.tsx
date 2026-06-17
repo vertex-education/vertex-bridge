@@ -1,11 +1,11 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Activity, Bot, ChevronLeft, ChevronRight, Download, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { getAuditLogData } from '#/lib/audit'
+import { getServerRequest } from '#/lib/security'
 import { AiDisclosure } from '#/components/AiDisclosure'
 import { BrandedAlert } from '#/components/BrandedAlert'
 
@@ -14,7 +14,7 @@ const auditSurfaceOptions = ['admin', 'client', 'system', 'vertex']
 
 const getAuditAccess = createServerFn({ method: 'GET' }).handler(async () => {
   const { auth } = await import('#/lib/auth')
-  const request = getRequest()
+  const request = await getServerRequest()
   const session = await auth.api.getSession({
     headers: request.headers,
   })

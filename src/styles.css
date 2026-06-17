@@ -204,13 +204,19 @@ pre code {
 }
 
 .page-wrap {
-  width: min(var(--page-max-width), calc(100% - 1rem));
+  width: min(var(--page-max-width), calc(100% - 2rem));
   margin-inline: auto;
 }
 
 @media (min-width: 640px) {
   .page-wrap {
-    width: min(var(--page-max-width), calc(100% - 2rem));
+    width: min(var(--page-max-width), calc(100% - 3.5rem));
+  }
+}
+
+@media (min-width: 1024px) {
+  .page-wrap {
+    width: min(var(--page-max-width), calc(100% - 6rem));
   }
 }
 

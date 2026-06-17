@@ -7,7 +7,7 @@ export const Route = createFileRoute('/api/asana/oauth/disconnect')({
     handlers: {
       POST: async ({ request }) => {
         try {
-          assertTrustedOrigin(request)
+          await assertTrustedOrigin(request)
           const session = await requireStaffSession()
           await disconnectAsana()
           const { recordAuditEvent } = await import('#/lib/audit')

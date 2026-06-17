@@ -3,7 +3,6 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import { AlertTriangle, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import {
   type ColumnDef,
@@ -17,7 +16,7 @@ import { authClient } from '#/lib/auth-client'
 import { eq, desc, sql } from 'drizzle-orm'
 import { reviewSubmission, sendNudgeEmail } from '#/lib/uploads'
 import { seedOnboardingProgressCache } from '#/lib/asana'
-import { assertTrustedOrigin, requireStaffSession } from '#/lib/security'
+import { assertTrustedOrigin, getServerRequest, requireStaffSession } from '#/lib/security'
 import { BrandedAlert } from '#/components/BrandedAlert'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -360,7 +359,7 @@ export const updateSchoolScheduledNudges = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { schoolNudgeSettings } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireStaffSession()
     const now = new Date()
 
@@ -388,7 +387,7 @@ export const updateSchoolScheduledNudges = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('#/lib/audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'vertex',
       category: 'notification',
       action: data.enabled ? 'scheduled_nudges_enabled' : 'scheduled_nudges_disabled',
@@ -416,7 +415,7 @@ export const updateClientProfile = createServerFn({ method: 'POST' })
     const { db } = await import('#/db')
     const { clientProfiles, invitations } = await import('#/db/schema')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireStaffSession()
 
     await db.update(invitations)
@@ -442,7 +441,7 @@ export const updateClientProfile = createServerFn({ method: 'POST' })
     const { recordAuditEvent } = await import('#/lib/audit')
     await recordAuditEvent({
       session,
-      request: getRequest(),
+      request: await getServerRequest(),
       surface: 'vertex',
       category: 'profile',
       action: 'client_profile_updated',

@@ -1,9 +1,9 @@
 import { Link, createFileRoute, redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import type { FormEvent } from 'react'
 import { useState } from 'react'
 import { CLIENT_TYPES } from '#/lib/client-types'
+import { getServerRequest } from '#/lib/security'
 
 type MockSeedSchool = {
   schoolName: string
@@ -235,7 +235,7 @@ const mockSeedSchools: MockSeedSchool[] = [
 
 const getAdminIntegrationsAccess = createServerFn({ method: 'GET' }).handler(async () => {
   const { auth } = await import('#/lib/auth')
-  const request = getRequest()
+  const request = await getServerRequest()
   const session = await auth.api.getSession({
     headers: request.headers,
   })
@@ -249,7 +249,7 @@ const getAdminIntegrationsAccess = createServerFn({ method: 'GET' }).handler(asy
 const getIntegrationsStatus = createServerFn({ method: 'GET' }).handler(async () => {
   const { requireStaffSession } = await import('#/lib/security')
   const { getAsanaConnectionStatus } = await import('#/lib/asana-oauth.server')
-  const request = getRequest()
+  const request = await getServerRequest()
 
   await requireStaffSession()
 
@@ -332,9 +332,9 @@ const seedMockHubSpotSchool = createServerFn({ method: 'POST' })
     const { provisionAsanaProjectForSchool } = await import('#/lib/asana')
     const { recordAuditEvent } = await import('#/lib/audit')
 
-    assertTrustedOrigin()
+    await assertTrustedOrigin()
     const session = await requireAdminSession()
-    const request = getRequest()
+    const request = await getServerRequest()
     const schoolName = data.schoolName.trim()
     const now = new Date()
 

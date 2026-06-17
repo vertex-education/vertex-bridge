@@ -1,13 +1,13 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/start-server-core'
 import { useState } from 'react'
 import { authClient } from '#/lib/auth-client'
 import { BrandedAlert } from '#/components/BrandedAlert'
+import { getServerRequest } from '#/lib/security'
 
 const getUserSettingsAccess = createServerFn({ method: 'GET' }).handler(async () => {
   const { auth } = await import('#/lib/auth')
-  const request = getRequest()
+  const request = await getServerRequest()
   const session = await auth.api.getSession({
     headers: request.headers,
   })
@@ -26,7 +26,7 @@ const resetCurrentUserPassword = createServerFn({ method: 'POST' })
     const { eq, and } = await import('drizzle-orm')
     const { hashPassword } = await import('@better-auth/utils/password')
 
-    const request = getRequest()
+    const request = await getServerRequest()
     const session = await auth.api.getSession({
       headers: request.headers,
     })

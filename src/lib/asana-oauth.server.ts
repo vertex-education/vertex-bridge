@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm'
-import { getRequest } from '@tanstack/start-server-core'
 import { db } from '#/db'
 import { asanaConnections, asanaOAuthSettings, asanaProjectSettings } from '#/db/schema'
 import { getCloudflareEnv } from './cloudflare-env.server'
+import { getServerRequest } from './security'
 import type { AppSession } from './security'
 
 const asanaConnectionId = 'default'
@@ -234,7 +234,7 @@ export async function saveAsanaOAuthSettings({ data }: {
   }
 }) {
   const { assertTrustedOrigin, requireStaffSession } = await import('./security')
-  assertTrustedOrigin()
+  await assertTrustedOrigin()
   const session = await requireStaffSession()
   const clientId = data.clientId.trim()
   const clientSecret = data.clientSecret.trim()
@@ -280,7 +280,7 @@ export async function saveAsanaOAuthSettings({ data }: {
   const { recordAuditEvent } = await import('./audit')
   await recordAuditEvent({
     session,
-    request: getRequest(),
+    request: await getServerRequest(),
     surface: 'admin',
     category: 'oauth',
     action: 'asana_oauth_settings_saved',
@@ -299,7 +299,7 @@ export async function saveAsanaOAuthSettings({ data }: {
 
 export async function clearAsanaOAuthSettings() {
   const { assertTrustedOrigin, requireStaffSession } = await import('./security')
-  assertTrustedOrigin()
+  await assertTrustedOrigin()
   const session = await requireStaffSession()
   await disconnectAsana()
   await db.delete(asanaOAuthSettings).where(eq(asanaOAuthSettings.id, asanaOAuthSettingsId))
@@ -307,7 +307,7 @@ export async function clearAsanaOAuthSettings() {
   const { recordAuditEvent } = await import('./audit')
   await recordAuditEvent({
     session,
-    request: getRequest(),
+    request: await getServerRequest(),
     surface: 'admin',
     category: 'oauth',
     action: 'asana_oauth_settings_cleared',
@@ -342,10 +342,10 @@ export async function listAsanaProjectTemplates({ data }: {
   }
 }) {
   const { assertTrustedOrigin, requireAdminSession } = await import('./security')
-  assertTrustedOrigin()
+  await assertTrustedOrigin()
   await requireAdminSession()
 
-  const token = await getAsanaBearerToken(getRequest())
+  const token = await getAsanaBearerToken(await getServerRequest())
   if (!token) {
     throw new Error('Connect Asana before loading project templates.')
   }
@@ -437,10 +437,10 @@ export async function listAsanaTeams({ data }: {
   }
 }) {
   const { assertTrustedOrigin, requireAdminSession } = await import('./security')
-  assertTrustedOrigin()
+  await assertTrustedOrigin()
   await requireAdminSession()
 
-  const token = await getAsanaBearerToken(getRequest())
+  const token = await getAsanaBearerToken(await getServerRequest())
   if (!token) {
     throw new Error('Connect Asana before loading teams.')
   }
@@ -571,7 +571,7 @@ export async function saveAsanaProjectTemplateSettings({ data }: {
   }
 }) {
   const { assertTrustedOrigin, requireAdminSession } = await import('./security')
-  assertTrustedOrigin()
+  await assertTrustedOrigin()
   const session = await requireAdminSession()
   const projectTemplateGid = data.projectTemplateGid.trim()
   const projectTemplateName = data.projectTemplateName.trim()
@@ -616,7 +616,7 @@ export async function saveAsanaProjectTemplateSettings({ data }: {
   const { recordAuditEvent } = await import('./audit')
   await recordAuditEvent({
     session,
-    request: getRequest(),
+    request: await getServerRequest(),
     surface: 'admin',
     category: 'asana',
     action: 'asana_project_template_selected',
