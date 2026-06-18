@@ -204,7 +204,7 @@ function UserSettingsPage() {
             <div className="flex-1">
               <h2 className="font-display text-lg font-bold text-[var(--vertex-blue)]">Welcome Tour</h2>
               <p className="mt-0.5 text-sm text-[var(--sea-ink-soft)]">
-                Revisit the Vertex Hub orientation — bridging the gap from sign-up to the summit of your onboarding journey.
+                Revisit the Vertex Bridge orientation — bridging the gap from sign-up to the summit of your onboarding journey.
               </p>
               {welcomeReplayed ? (
                 <p className="mt-3 text-xs font-semibold text-[var(--tertiary-green)]">

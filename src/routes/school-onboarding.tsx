@@ -843,9 +843,9 @@ function WelcomeModal({ onClose }: { onClose: () => void }) {
   const slides: WelcomeSlide[] = [
     {
       id: 0,
-      kicker: 'Welcome to the Vertex Hub',
+      kicker: 'Welcome to Vertex Bridge',
       title: 'Your Base Camp Awaits',
-      body: "Every great summit starts with a first step. You've crossed the bridge — and now the path to a seamless onboarding experience stretches out before you. This brief tour will orient you to everything the Vertex Hub has to offer so you can hit the trail running.",
+      body: "Every great summit starts with a first step. You've crossed the bridge — and now the path to a seamless onboarding experience stretches out before you. This brief tour will orient you to everything Vertex Bridge has to offer so you can hit the trail running.",
       visual: (
         <div className="flex flex-col items-center gap-3 py-2">
           <div className="relative flex h-24 w-24 items-center justify-center rounded-3xl bg-[var(--vertex-blue)] shadow-xl">
