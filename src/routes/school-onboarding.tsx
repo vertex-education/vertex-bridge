@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Clock3, ExternalLink, Lock, Pencil, Send, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, CheckSquare, ChevronLeft, ChevronRight, Clock3, ExternalLink, Lock, MessageCircle, Mountain, Pencil, Send, Sparkles, Users, X } from 'lucide-react'
 import { authClient } from '#/lib/auth-client'
 import { completeOnboardingTaskManually, getOnboardingTasks } from '#/lib/asana'
 import { uploadOnboardingFile } from '#/lib/uploads'
@@ -826,6 +826,255 @@ function LoadingJourneyOverlay() {
   )
 }
 
+const WELCOME_SEEN_KEY = 'vertex-bridge:welcome-seen'
+const WELCOME_REPLAY_KEY = 'vertex-bridge:replay-welcome'
+
+type WelcomeSlide = {
+  id: number
+  kicker: string
+  title: string
+  body: string
+  visual: React.ReactNode
+}
+
+function WelcomeModal({ onClose }: { onClose: () => void }) {
+  const [slide, setSlide] = useState(0)
+
+  const slides: WelcomeSlide[] = [
+    {
+      id: 0,
+      kicker: 'Welcome to the Vertex Hub',
+      title: 'Your Base Camp Awaits',
+      body: "Every great summit starts with a first step. You've crossed the bridge — and now the path to a seamless onboarding experience stretches out before you. This brief tour will orient you to everything the Vertex Hub has to offer so you can hit the trail running.",
+      visual: (
+        <div className="flex flex-col items-center gap-3 py-2">
+          <div className="relative flex h-24 w-24 items-center justify-center rounded-3xl bg-[var(--vertex-blue)] shadow-xl">
+            <img src="/brand/vertex-icon-square.png" alt="" aria-hidden="true" className="h-16 w-16 rounded-2xl object-contain" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            {[0, 1, 2, 3].map((i) => (
+              <span
+                key={i}
+                className={`inline-block h-1.5 rounded-full transition-all duration-300 ${i === 0 ? 'w-6 bg-[var(--vertex-blue)]' : 'w-1.5 bg-[var(--chip-line)]'}`}
+              />
+            ))}
+          </div>
+          <p className="text-center text-xs font-semibold uppercase tracking-widest text-[var(--vertex-gold)]">Bridging the gap · Reaching the peak</p>
+        </div>
+      ),
+    },
+    {
+      id: 1,
+      kicker: 'Build Your Expedition Team',
+      title: 'Add Staff to Your Journey',
+      body: "You don't have to trek this path alone. Invite colleagues, administrators, or department leads to join your onboarding workspace. Head to the Staff section in your Hub to send invitations — each team member gets their own view of assigned tasks so nobody falls behind on the ascent.",
+      visual: (
+        <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--foam)] shadow-sm">
+          <div className="flex items-center gap-2 border-b border-[var(--line)] bg-white px-3 py-2">
+            <Users className="h-4 w-4 text-[var(--vertex-blue)]" />
+            <span className="text-xs font-bold text-[var(--vertex-blue)]">Team Members</span>
+          </div>
+          <div className="divide-y divide-[var(--line)]">
+            {[
+              { name: 'Alex Rivera', role: 'School Leader', initials: 'AR', active: true },
+              { name: 'Jordan Kim', role: 'School Staff', initials: 'JK', active: true },
+              { name: 'Sam Patel', role: 'Invite Pending', initials: '?', active: false },
+            ].map((member) => (
+              <div key={member.name} className="flex items-center gap-3 px-3 py-2.5">
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${member.active ? 'bg-[var(--vertex-blue)]' : 'bg-[var(--light-gray)]'}`}>
+                  {member.initials}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-[var(--sea-ink)]">{member.name}</p>
+                  <p className={`text-[10px] ${member.active ? 'text-[var(--vertex-gray)]' : 'text-[var(--vertex-gold)]'}`}>{member.role}</p>
+                </div>
+                {member.active && <div className="ml-auto h-2 w-2 rounded-full bg-[var(--tertiary-green)]" />}
+              </div>
+            ))}
+          </div>
+          <div className="px-3 py-2">
+            <button type="button" className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--vertex-blue)] py-1.5 text-xs font-bold text-white">
+              <Users className="h-3.5 w-3.5" />
+              Invite a Team Member
+            </button>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 2,
+      kicker: 'Navigate the Trail',
+      title: 'Tasks, Files & Milestones',
+      body: 'Your onboarding journey is broken into clear checkpoints — each one a stepping stone toward the summit. Complete tasks, upload required documents, and track your progress in real time. Use Journey mode to focus on one step at a time, or switch to Checklist view to see the full trail map at a glance.',
+      visual: (
+        <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--foam)] shadow-sm">
+          <div className="flex items-center gap-2 border-b border-[var(--line)] bg-white px-3 py-2">
+            <CheckSquare className="h-4 w-4 text-[var(--vertex-blue)]" />
+            <span className="text-xs font-bold text-[var(--vertex-blue)]">Onboarding Tasks</span>
+            <span className="ml-auto rounded-full bg-[var(--vertex-blue)] px-2 py-0.5 text-[10px] font-bold text-white">3 / 8</span>
+          </div>
+          <div className="divide-y divide-[var(--line)]">
+            {[
+              { label: 'Submit signed SFO agreement', done: true },
+              { label: 'Upload enrollment data file', done: true },
+              { label: 'Complete intake assessment', done: true },
+              { label: 'Review implementation timeline', done: false, active: true },
+              { label: 'Schedule kickoff meeting', done: false },
+            ].map((task) => (
+              <div key={task.label} className={`flex items-center gap-3 px-3 py-2.5 ${(task as any).active ? 'bg-blue-50' : ''}`}>
+                <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${task.done ? 'border-[var(--tertiary-green)] bg-[var(--tertiary-green)]' : (task as any).active ? 'border-[var(--vertex-blue)]' : 'border-[var(--chip-line)]'}`}>
+                  {task.done && <span className="text-[10px] font-bold text-white">✓</span>}
+                  {(task as any).active && <span className="h-2 w-2 rounded-full bg-[var(--vertex-blue)]" />}
+                </div>
+                <p className={`truncate text-xs ${task.done ? 'text-[var(--vertex-gray)] line-through' : (task as any).active ? 'font-semibold text-[var(--vertex-blue)]' : 'text-[var(--sea-ink)]'}`}>{task.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 3,
+      kicker: 'Never Hike Alone',
+      title: 'Your AI Guide & Vertex Team',
+      body: "Whenever the trail feels steep, help is one tap away. The chat panel gives you instant access to our AI assistant — trained on your specific onboarding journey — and a direct line to your dedicated Vertex team. Look for the chat icon in the lower corner to open it anytime.",
+      visual: (
+        <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--foam)] shadow-sm">
+          <div className="flex border-b border-[var(--line)] bg-white">
+            <div className="flex flex-1 items-center justify-center gap-1.5 border-r border-[var(--line)] py-2 text-xs font-bold text-[var(--vertex-blue)]">
+              <Sparkles className="h-3.5 w-3.5" />
+              AI Assistant
+            </div>
+            <div className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-semibold text-[var(--vertex-gray)]">
+              <MessageCircle className="h-3.5 w-3.5" />
+              Vertex Team
+            </div>
+          </div>
+          <div className="space-y-2 p-3">
+            <div className="flex gap-2">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--vertex-blue)]">
+                <Sparkles className="h-3 w-3 text-white" />
+              </div>
+              <div className="max-w-[80%] rounded-xl rounded-tl-none bg-white px-3 py-2 shadow-sm">
+                <p className="text-xs text-[var(--sea-ink)]">Hi! I'm your onboarding guide. Ask me anything about your tasks, documents, or timeline.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <div className="max-w-[80%] rounded-xl rounded-tr-none bg-[var(--vertex-blue)] px-3 py-2 shadow-sm">
+                <p className="text-xs text-white">What documents do I need to upload first?</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--vertex-blue)]">
+                <Sparkles className="h-3 w-3 text-white" />
+              </div>
+              <div className="max-w-[80%] rounded-xl rounded-tl-none bg-white px-3 py-2 shadow-sm">
+                <p className="text-xs text-[var(--sea-ink)]">Start with your enrollment data file — it's your first trail marker!</p>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 border-t border-[var(--line)] bg-white px-3 py-2">
+            <input readOnly placeholder="Ask anything…" className="flex-1 rounded-lg bg-[var(--sand)] px-3 py-1.5 text-xs text-[var(--sea-ink)] outline-none" />
+            <button type="button" className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--vertex-blue)]">
+              <Send className="h-3.5 w-3.5 text-white" />
+            </button>
+          </div>
+        </div>
+      ),
+    },
+  ]
+
+  const currentSlide = slides[slide]
+  const isFirst = slide === 0
+  const isLast = slide === slides.length - 1
+
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-[rgba(0,30,60,0.72)] px-4 backdrop-blur-sm">
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-white shadow-2xl">
+        {/* Header banner */}
+        <div className="relative h-28 overflow-hidden bg-[var(--vertex-blue)]">
+          <img
+            src="/brand/mountain-blue.svg"
+            alt=""
+            aria-hidden="true"
+            className="absolute inset-0 h-full w-full object-cover opacity-25"
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(0,56,101,0.95),rgba(0,47,85,0.75))]" />
+          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between px-5 pb-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--vertex-gold)]">{currentSlide.kicker}</p>
+              <h2 className="font-display text-xl font-bold text-white leading-tight">{currentSlide.title}</h2>
+            </div>
+            <Mountain className="h-10 w-10 shrink-0 text-white/20" />
+          </div>
+          <button
+            type="button"
+            aria-label="Dismiss welcome tour"
+            onClick={onClose}
+            className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/70 transition hover:bg-white/20 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Slide body */}
+        <div className="px-5 pt-5 pb-4">
+          <p className="mb-5 text-sm leading-relaxed text-[var(--sea-ink-soft)]">{currentSlide.body}</p>
+          {currentSlide.visual}
+        </div>
+
+        {/* Footer nav */}
+        <div className="flex items-center justify-between border-t border-[var(--line)] px-5 py-3">
+          {/* Dot indicators */}
+          <div className="flex items-center gap-1.5">
+            {slides.map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                aria-label={`Go to slide ${i + 1}`}
+                onClick={() => setSlide(i)}
+                className={`rounded-full transition-all duration-200 ${i === slide ? 'w-5 h-2 bg-[var(--vertex-blue)]' : 'w-2 h-2 bg-[var(--chip-line)] hover:bg-[var(--vertex-gray)]'}`}
+              />
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!isFirst && (
+              <button
+                type="button"
+                onClick={() => setSlide((s) => s - 1)}
+                className="flex items-center gap-1 rounded-xl border border-[var(--chip-line)] px-3 py-1.5 text-xs font-semibold text-[var(--vertex-blue)] transition hover:bg-[var(--sand)]"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Back
+              </button>
+            )}
+            {isLast ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex items-center gap-1.5 rounded-xl bg-[var(--vertex-blue)] px-4 py-1.5 text-xs font-bold text-white shadow-md transition hover:bg-[var(--lagoon-deep)]"
+              >
+                Begin Your Journey
+                <Mountain className="h-3.5 w-3.5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSlide((s) => s + 1)}
+                className="flex items-center gap-1.5 rounded-xl bg-[var(--vertex-blue)] px-4 py-1.5 text-xs font-bold text-white shadow-md transition hover:bg-[var(--lagoon-deep)]"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const completionBurstOffsets = [
   ['-8rem', '-2.6rem'],
   ['-5.8rem', '-0.4rem'],
@@ -931,6 +1180,7 @@ function SchoolOnboardingPage() {
     title: string
     message: string
   } | null>(null)
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false)
   const [showDiscrepancyForm, setShowDiscrepancyForm] = useState(false)
   const [discrepancy, setDiscrepancy] = useState('')
   const [discrepancySending, setDiscrepancySending] = useState(false)
@@ -1154,6 +1404,27 @@ function SchoolOnboardingPage() {
       socket?.close()
     }
   }, [selectedSchoolName, queryClient])
+
+  useEffect(() => {
+    if (isLoading) return
+
+    const replayRequested = window.sessionStorage.getItem(WELCOME_REPLAY_KEY) === 'true'
+    if (replayRequested) {
+      window.sessionStorage.removeItem(WELCOME_REPLAY_KEY)
+      setShowWelcomeModal(true)
+      return
+    }
+
+    const alreadySeen = window.localStorage.getItem(WELCOME_SEEN_KEY) === 'true'
+    if (!alreadySeen) {
+      setShowWelcomeModal(true)
+    }
+  }, [isLoading])
+
+  const handleWelcomeClose = () => {
+    window.localStorage.setItem(WELCOME_SEEN_KEY, 'true')
+    setShowWelcomeModal(false)
+  }
 
   useEffect(() => {
     const openStoredChat = window.sessionStorage.getItem('vertex-bridge:open-ai-chat') === 'true'
@@ -2190,6 +2461,7 @@ function SchoolOnboardingPage() {
   return (
     <main className="page-wrap page-shell pb-28">
       {isLoading && <LoadingJourneyOverlay />}
+      {showWelcomeModal && !isLoading && <WelcomeModal onClose={handleWelcomeClose} />}
       {completionCelebration && (
         <CompletionCelebration taskName={completionCelebration.taskName} />
       )}

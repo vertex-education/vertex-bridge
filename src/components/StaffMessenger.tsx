@@ -183,7 +183,7 @@ export default function StaffMessenger() {
   return (
     <div className={isOpen
       ? 'fixed inset-x-2 bottom-[5.75rem] z-50 flex flex-col items-end sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[720px]'
-      : 'fixed right-0 bottom-48 z-50 md:bottom-72'
+      : 'fixed right-0 bottom-28 z-50'
     }>
       {!isOpen && (
         <button

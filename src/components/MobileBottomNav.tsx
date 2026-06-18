@@ -49,13 +49,13 @@ export default function MobileBottomNav() {
       <nav className="mx-auto flex max-w-md items-center gap-2" aria-label="Mobile role navigation">
         {role === 'admin' && (
           <>
-            <Link to="/admin" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
-              <UserPlus size={18} aria-hidden="true" />
-              <span>Invites</span>
-            </Link>
             <Link to="/vertex-dashboard" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
               <LayoutDashboard size={18} aria-hidden="true" />
               <span>Dashboard</span>
+            </Link>
+            <Link to="/admin" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
+              <UserPlus size={18} aria-hidden="true" />
+              <span>Invites</span>
             </Link>
             <Link to="/admin-users" className={mobileNavLinkClass} activeProps={{ className: mobileNavActiveClass }}>
               <UsersRound size={18} aria-hidden="true" />

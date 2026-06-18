@@ -32,14 +32,14 @@ export default function Header() {
             <div className="hidden items-center gap-6 text-sm font-semibold md:flex">
               {role === 'admin' && (
                 <>
+                  <Link to="/vertex-dashboard" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
+                    Onboarding Dashboard
+                  </Link>
                   <Link to="/admin" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
                     School Invites
                   </Link>
                   <Link to="/admin-users" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
                     Users
-                  </Link>
-                  <Link to="/vertex-dashboard" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
-                    Onboarding Dashboard
                   </Link>
                   <Link to="/admin-integrations" className="nav-link" activeProps={{ className: 'nav-link is-active' }}>
                     Integrations

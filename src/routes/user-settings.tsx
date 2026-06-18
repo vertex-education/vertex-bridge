@@ -1,9 +1,13 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
+import { Mountain } from 'lucide-react'
 import { authClient } from '#/lib/auth-client'
 import { BrandedAlert } from '#/components/BrandedAlert'
 import { getServerRequest } from '#/lib/security'
+
+const WELCOME_SEEN_KEY = 'vertex-bridge:welcome-seen'
+const WELCOME_REPLAY_KEY = 'vertex-bridge:replay-welcome'
 
 const getUserSettingsAccess = createServerFn({ method: 'GET' }).handler(async () => {
   const { auth } = await import('#/lib/auth')
@@ -100,6 +104,13 @@ function UserSettingsPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [welcomeReplayed, setWelcomeReplayed] = useState(false)
+
+  const handleReplayWelcome = () => {
+    window.localStorage.removeItem(WELCOME_SEEN_KEY)
+    window.sessionStorage.setItem(WELCOME_REPLAY_KEY, 'true')
+    setWelcomeReplayed(true)
+  }
 
   const role = session?.user ? (session.user as any).role : null
   const roleLabel =
@@ -183,6 +194,34 @@ function UserSettingsPage() {
               </dd>
             </div>
           </dl>
+        </section>
+
+        <section className="island-shell rounded-2xl p-5 sm:p-6">
+          <div className="flex items-start gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--vertex-blue)]">
+              <Mountain className="h-5 w-5 text-white" />
+            </div>
+            <div className="flex-1">
+              <h2 className="font-display text-lg font-bold text-[var(--vertex-blue)]">Welcome Tour</h2>
+              <p className="mt-0.5 text-sm text-[var(--sea-ink-soft)]">
+                Revisit the Vertex Hub orientation — bridging the gap from sign-up to the summit of your onboarding journey.
+              </p>
+              {welcomeReplayed ? (
+                <p className="mt-3 text-xs font-semibold text-[var(--tertiary-green)]">
+                  The welcome tour will appear the next time you visit your onboarding hub. ✓
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleReplayWelcome}
+                  className="mt-3 flex items-center gap-1.5 rounded-xl border border-[var(--vertex-blue)] px-4 py-2 text-sm font-bold text-[var(--vertex-blue)] transition hover:bg-[var(--sand)]"
+                >
+                  <Mountain className="h-4 w-4" />
+                  Replay Welcome Tour
+                </button>
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="island-shell rounded-2xl p-5 sm:p-6">
