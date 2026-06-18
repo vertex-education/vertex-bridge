@@ -845,7 +845,7 @@ function WelcomeModal({ onClose }: { onClose: () => void }) {
       id: 0,
       kicker: 'Welcome to Vertex Bridge',
       title: 'Your Base Camp Awaits',
-      body: "Every great summit starts with a first step. You've crossed the bridge — and now the path to a seamless onboarding experience stretches out before you. This brief tour will orient you to everything Vertex Bridge has to offer so you can hit the trail running.",
+      body: "You've crossed the bridge. This quick tour shows you exactly where to go and what to expect on your path to the summit.",
       visual: (
         <div className="flex flex-col items-center gap-3 py-2">
           <div className="relative flex h-24 w-24 items-center justify-center rounded-3xl bg-[var(--vertex-blue)] shadow-xl">
@@ -867,7 +867,7 @@ function WelcomeModal({ onClose }: { onClose: () => void }) {
       id: 1,
       kicker: 'Build Your Expedition Team',
       title: 'Add Staff to Your Journey',
-      body: "You don't have to trek this path alone. Invite colleagues, administrators, or department leads to join your onboarding workspace. Head to the Staff section in your Hub to send invitations — each team member gets their own view of assigned tasks so nobody falls behind on the ascent.",
+      body: "Invite colleagues to share the load. Each team member gets their own task view so nothing gets missed on the ascent.",
       visual: (
         <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--foam)] shadow-sm">
           <div className="flex items-center gap-2 border-b border-[var(--line)] bg-white px-3 py-2">
@@ -905,7 +905,7 @@ function WelcomeModal({ onClose }: { onClose: () => void }) {
       id: 2,
       kicker: 'Navigate the Trail',
       title: 'Tasks, Files & Milestones',
-      body: 'Your onboarding journey is broken into clear checkpoints — each one a stepping stone toward the summit. Complete tasks, upload required documents, and track your progress in real time. Use Journey mode to focus on one step at a time, or switch to Checklist view to see the full trail map at a glance.',
+      body: 'Clear checkpoints, one step at a time. Complete tasks, upload documents, and track progress. Switch between Journey and Checklist views to match your pace.',
       visual: (
         <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--foam)] shadow-sm">
           <div className="flex items-center gap-2 border-b border-[var(--line)] bg-white px-3 py-2">
@@ -937,7 +937,7 @@ function WelcomeModal({ onClose }: { onClose: () => void }) {
       id: 3,
       kicker: 'Never Hike Alone',
       title: 'Your AI Guide & Vertex Team',
-      body: "Whenever the trail feels steep, help is one tap away. The chat panel gives you instant access to our AI assistant — trained on your specific onboarding journey — and a direct line to your dedicated Vertex team. Look for the chat icon in the lower corner to open it anytime.",
+      body: "Help is always one tap away. Hit the chat icon anytime to reach your AI guide or message your Vertex team directly.",
       visual: (
         <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--foam)] shadow-sm">
           <div className="flex border-b border-[var(--line)] bg-white">
